@@ -1,13 +1,22 @@
-SecurityManager = require('../../managers/SecurityManager')
+AuthorizationMiddlewear = require('../Authorization/AuthorizationMiddlewear')
 AuthenticationController = require('../Authentication/AuthenticationController')
 ProjectUploadController = require "./ProjectUploadController"
+RateLimiterMiddlewear = require('../Security/RateLimiterMiddlewear')
 
 module.exports =
-	apply: (app) ->
-		app.post '/project/new/upload',
+	apply: (webRouter, apiRouter) ->
+		webRouter.post '/project/new/upload',
 			AuthenticationController.requireLogin(),
 			ProjectUploadController.uploadProject
-		app.post '/Project/:Project_id/upload',
-			SecurityManager.requestCanModifyProject,
+
+		webRouter.post '/Project/:Project_id/upload',
+			RateLimiterMiddlewear.rateLimit({
+				endpointName: "file-upload"
+				params: ["Project_id"]
+				maxRequests: 200
+				timeInterval: 60 * 30
+			}),
+			AuthenticationController.requireLogin(),
+			AuthorizationMiddlewear.ensureUserCanWriteProjectContent,
 			ProjectUploadController.uploadFile
 

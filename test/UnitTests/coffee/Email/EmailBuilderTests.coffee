@@ -9,44 +9,31 @@ _ = require('underscore')
 _.templateSettings =
   interpolate: /\{\{(.+?)\}\}/g
 
-describe "Email Templator ", ->
+describe "EmailBuilder", ->
 
 	beforeEach ->
 
-		@settings = {}
+		@settings = appName: "testApp"
 		@EmailBuilder = SandboxedModule.require modulePath, requires:
 			"settings-sharelatex":@settings
 			"logger-sharelatex": log:->
 
-	describe "welcomeEmail", ->
-
-		beforeEach ->
-			@opts =
-				to:"bob@bob.com"
-				first_name:"bob"
-			@email = @EmailBuilder.buildEmail("welcome", @opts)
-
-		it "should insert the first_name into the template", ->
-			@email.html.indexOf(@opts.first_name).should.not.equal -1
-
-		it "should not have undefined in it", ->
-			@email.html.indexOf("undefined").should.equal -1
-
-	describe "projectSharedWithYou", ->
+	describe "projectInvite", ->
 		beforeEach ->
 			@opts =
 				to:"bob@bob.com"
 				first_name:"bob"
 				owner:
 					email:"sally@hally.com"
+				inviteUrl: "http://example.com/invite"
 				project:
 					url:"http://www.project.com"
 					name:"standard project"
-			@email = @EmailBuilder.buildEmail("projectSharedWithYou", @opts)
+			@email = @EmailBuilder.buildEmail("projectInvite", @opts)
 
-		it "should insert the owner email into the template", ->
-			@email.html.indexOf(@opts.owner.email).should.not.equal -1
-			@email.subject.indexOf(@opts.owner.email).should.not.equal -1
+		it 'should have html and text properties', ->
+			expect(@email.html?).to.equal true
+			expect(@email.text?).to.equal true
 
 		it "should not have undefined in it", ->
 			@email.html.indexOf("undefined").should.equal -1

@@ -2,7 +2,7 @@ Project = require('./Project').Project
 Settings = require 'settings-sharelatex'
 _ = require('underscore')
 mongoose = require('mongoose')
-uuid = require('node-uuid')
+uuid = require('uuid')
 Schema = mongoose.Schema
 ObjectId = Schema.ObjectId
 
@@ -24,17 +24,21 @@ UserSchema = new Schema
 							theme       :   {type : String, default: 'textmate'}
 							fontSize    :   {type : Number, default:'12'}
 							autoComplete:   {type : Boolean, default: true}
+							autoPairDelimiters: {type : Boolean, default: true}
 							spellCheckLanguage :   {type : String, default: "en"}
 							pdfViewer   :   {type : String, default: "pdfjs"}
+							syntaxValidation   :   {type : Boolean}
 						}
 	features		  : {
 							collaborators: { type:Number,  default: Settings.defaultFeatures.collaborators }
 							versioning:    { type:Boolean, default: Settings.defaultFeatures.versioning }
 							dropbox:       { type:Boolean, default: Settings.defaultFeatures.dropbox }
-						}
-	featureSwitches	  : {
-							dropbox: {type:Boolean, default:true},
-							oldHistory: {type:Boolean}
+							github:        { type:Boolean, default: Settings.defaultFeatures.github }
+							compileTimeout: { type:Number, default: Settings.defaultFeatures.compileTimeout }
+							compileGroup:  { type:String,  default: Settings.defaultFeatures.compileGroup }
+							templates:     { type:Boolean, default: Settings.defaultFeatures.templates }
+							references:    { type:Boolean, default: Settings.defaultFeatures.references }
+							trackChanges:  { type:Boolean, default: Settings.defaultFeatures.trackChanges }
 						}
 	referal_id : {type:String, default:() -> uuid.v4().split("-")[0]}
 	refered_users: [ type:ObjectId, ref:'User' ]
@@ -50,33 +54,11 @@ UserSchema = new Schema
 					# For example, a user signing up directly for a paid plan
 					# has this set to true, despite never having had a free trial
 					hadFreeTrial: {type: Boolean, default: false}
-
-
-UserSchema.statics.getAllIds = (callback)->
-	this.find {}, ["first_name"], callback
-
-
-UserSchema.statics.findReadOnlyProjects = (user_id, callback)->
-	@find({'projects.readOnly_refs':user_id}).populate('projects.readOnly_refs').run (err, users)->
-		projects = []
-		_.each users, (user)->
-			_.each user.projects, (project)->
-				_.each project.readOnly_refs, (subUser)->
-					if(subUser._id == user_id)
-						projects.push(project)
-		callback(projects)
-
-UserSchema.statics.findCollaborationProjects = (user_id, callback)->
-	@find({'projects.collaberator_refs':user_id}).populate('projects.collaberator_refs').run (err, users)->
-		projects = []
-		_.each users, (user)->
-			_.each user.projects, (project)->
-				_.each project.collaberator_refs, (subUser)->
-					if(subUser._id == user_id)
-						projects.push(project)
-		callback(projects)
-
-
+	refProviders: {
+		mendeley: Boolean  # coerce the refProviders values to Booleans
+		zotero: Boolean
+	}
+	betaProgram:   { type:Boolean, default: false}
 
 conn = mongoose.createConnection(Settings.mongo.url, server: poolSize: 10)
 

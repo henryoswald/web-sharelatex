@@ -1,11 +1,17 @@
 Project = require('../../models/Project').Project
-Errors = require "../../errors"
+ProjectGetter = require("./ProjectGetter")
+Errors = require "../Errors/Errors"
 _ = require('underscore')
 logger = require('logger-sharelatex')
 async = require('async')
+ProjectGetter = require "./ProjectGetter"
 
-module.exports =
-	findElement: (options, callback = (err, element, path, parentFolder)->)->
+module.exports = ProjectLocator =
+	findElement: (options, _callback = (err, element, path, parentFolder)->)->
+		callback = (args...) ->
+			_callback(args...)
+			_callback = () ->
+
 		{project, project_id, element_id, type} = options
 		elementType = sanitizeTypeOfElement type
 
@@ -20,6 +26,8 @@ module.exports =
 			element = _.find searchFolder[elementType], (el)-> el?._id+'' == element_id+'' #need to ToString both id's for robustness
 			if !element? && searchFolder.folders? && searchFolder.folders.length != 0
 				_.each searchFolder.folders, (folder, index)->
+					if !folder?
+						return
 					newPath = {}
 					newPath[key] = value for own key,value of path #make a value copy of the string
 					newPath.fileSystem += "/#{folder.name}"
@@ -46,7 +54,7 @@ module.exports =
 		if project?
 			startSearch(project)
 		else
-			Project.findById project_id, (err, project)->
+			ProjectGetter.getProject project_id, {rootFolder:true, rootDoc_id:true}, (err, project)->
 				return callback(err) if err?
 				if !project?
 					return callback(new Errors.NotFoundError("project not found"))
@@ -54,46 +62,74 @@ module.exports =
 
 	findRootDoc : (opts, callback)->
 		getRootDoc = (project)=>
-			@findElement {project:project, element_id:project.rootDoc_id, type:"docs"}, callback
+			if project.rootDoc_id?
+				@findElement {project:project, element_id:project.rootDoc_id, type:"docs"}, (error, args...) ->
+					if error?
+						if error instanceof Errors.NotFoundError
+							return callback null, null
+						else
+							return callback error
+					return callback null, args...
+			else
+				callback null, null
 		{project, project_id} = opts
 		if project?
 			getRootDoc project
 		else
-			Project.findById project_id, (err, project)->
-				getRootDoc project
+			ProjectGetter.getProject project_id, {rootFolder:true, rootDoc_id:true}, (err, project)->
+				if err?
+					logger.err err:err, "error getting project"
+					return callback(err)
+				else
+					getRootDoc project
 
-	findElementByPath: (project_or_id, needlePath, callback = (err, foundEntity)->)->
+	findElementByPath: (project_or_id, needlePath, callback = (err, foundEntity, type)->)->
 
 		getParentFolder = (haystackFolder, foldersList, level, cb)->
 			if foldersList.length == 0
 				return cb null, haystackFolder
 			needleFolderName = foldersList[level]
 			found = false
-			_.each haystackFolder.folders, (folder)->
+			for folder in haystackFolder.folders
 				if folder.name.toLowerCase() == needleFolderName.toLowerCase()
 					found = true
 					if level == foldersList.length-1
-						cb null, folder
+						return cb null, folder
 					else
-						getParentFolder(folder, foldersList, ++level, cb)
+						return getParentFolder(folder, foldersList, level+1, cb)
 			if !found
 				cb("not found project_or_id: #{project_or_id} search path: #{needlePath}, folder #{foldersList[level]} could not be found")
 
 		getEntity = (folder, entityName, cb)->
 			if !entityName?
-				return cb null, folder
-			enteties = _.union folder.fileRefs, folder.docs, folder.folders
-			result = _.find enteties, (entity)->
-				entity.name.toLowerCase() == entityName.toLowerCase()
+				return cb null, folder, "folder"
+			for file in folder.fileRefs or []
+				if file?.name.toLowerCase() == entityName.toLowerCase()
+					result = file
+					type = "file"
+			for doc in folder.docs or []
+				if doc?.name.toLowerCase() == entityName.toLowerCase()
+					result = doc
+					type = "doc"
+			for childFolder in folder.folders or []
+				if childFolder?.name.toLowerCase() == entityName.toLowerCase()
+					result = childFolder
+					type = "folder"
+
 			if result?
-				cb null, result
+				cb null, result, type
 			else
 				cb("not found project_or_id: #{project_or_id} search path: #{needlePath}, entity #{entityName} could not be found")
 
 
 		Project.getProject project_or_id, "", (err, project)->
+			if err?
+				logger.err err:err, project_or_id:project_or_id, "error getting project for finding element"
+				return callback(err)
+			if !project?
+				return callback("project could not be found for finding a element #{project_or_id}")
 			if needlePath == '' || needlePath == '/'
-				return callback(null, project.rootFolder[0])
+				return callback(null, project.rootFolder[0], "folder")
 
 			if needlePath.indexOf('/') == 0
 				needlePath = needlePath.substring(1)
@@ -114,11 +150,12 @@ module.exports =
 			async.waterfall jobs, callback
 
 	findUsersProjectByName: (user_id, projectName, callback)->
-		Project.findAllUsersProjects user_id, 'name', (err, projects, collabertions=[])->
+		ProjectGetter.findAllUsersProjects user_id, 'name archived', (err, projects, collabertions=[])->
+			return callback(error) if error?
 			projects = projects.concat(collabertions)
 			projectName = projectName.toLowerCase()
-			project = _.find projects, (project)-> 
-				project.name.toLowerCase() == projectName
+			project = _.find projects, (project)->
+				project.name.toLowerCase() == projectName and project.archived != true
 			logger.log user_id:user_id, projectName:projectName, totalProjects:projects.length, project:project, "looking for project by name"
 			callback(null, project)
 

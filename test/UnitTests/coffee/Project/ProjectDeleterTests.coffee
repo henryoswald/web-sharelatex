@@ -4,7 +4,7 @@ SandboxedModule = require('sandboxed-module')
 sinon = require('sinon')
 
 
-describe 'Project deleter', ->
+describe 'ProjectDeleter', ->
 
 	beforeEach ->
 		@project_id = "12312"
@@ -25,11 +25,18 @@ describe 'Project deleter', ->
 		@editorController = notifyUsersProjectHasBeenDeletedOrRenamed : sinon.stub().callsArgWith(1)
 		@TagsHandler = 
 			removeProjectFromAllTags: sinon.stub().callsArgWith(2)
+		@ProjectGetter =
+			getProject:sinon.stub()
+		@CollaboratorsHandler =
+			removeUserFromAllProjets: sinon.stub().yields()
 		@deleter = SandboxedModule.require modulePath, requires:
 			"../Editor/EditorController": @editorController
 			'../../models/Project':{Project:@Project}
 			'../DocumentUpdater/DocumentUpdaterHandler': @documentUpdaterHandler
 			"../Tags/TagsHandler":@TagsHandler
+			"../FileStore/FileStoreHandler": @FileStoreHandler = {}
+			"../Collaborators/CollaboratorsHandler": @CollaboratorsHandler
+			"./ProjectGetter": @ProjectGetter
 			'logger-sharelatex':
 				log:->
 
@@ -46,6 +53,20 @@ describe 'Project deleter', ->
 			@deleter.markAsDeletedByExternalSource project_id, =>
 				@editorController.notifyUsersProjectHasBeenDeletedOrRenamed.calledWith(project_id).should.equal true
 				done()
+				
+	describe "unmarkAsDeletedByExternalSource", ->
+		beforeEach ->
+			@Project.update = sinon.stub().callsArg(3)
+			@callback = sinon.stub()
+			@project = {
+				_id: @project_id
+			}
+			@deleter.unmarkAsDeletedByExternalSource @project_id, @callback
+		
+		it "should remove the flag from the project", ->
+			@Project.update
+				.calledWith({_id: @project_id}, {deletedByExternalDataSource:false})
+				.should.equal true
 
 	describe "deleteUsersProjects", ->
 
@@ -53,6 +74,12 @@ describe 'Project deleter', ->
 			user_id = 1234
 			@deleter.deleteUsersProjects user_id, =>
 				@Project.remove.calledWith(owner_ref:user_id).should.equal true
+				done()
+
+		it "should remove all the projects the user is a collaborator of", (done)->
+			user_id = 1234
+			@deleter.deleteUsersProjects user_id, =>
+				@CollaboratorsHandler.removeUserFromAllProjets.calledWith(user_id).should.equal true
 				done()
 
 	describe "deleteProject", ->
@@ -74,6 +101,9 @@ describe 'Project deleter', ->
 
 	describe "archiveProject", ->
 		beforeEach ->
+			@CollaboratorsHandler.getMemberIds = sinon.stub()
+			@CollaboratorsHandler.getMemberIds.withArgs(@project_id).yields(null, ["member-id-1", "member-id-2"])
+			@ProjectGetter.getProject.callsArgWith(2, null, @project)
 			@Project.update.callsArgWith(2)
 
 		it "should flushProjectToMongoAndDelete in doc updater", (done)->
@@ -92,12 +122,8 @@ describe 'Project deleter', ->
 
 		it "should removeProjectFromAllTags", (done)->
 			@deleter.archiveProject @project_id, =>
-				@TagsHandler.removeProjectFromAllTags.calledWith(@project.owner_ref, @project_id).should.equal true
-				@TagsHandler.removeProjectFromAllTags.calledWith(@project.collaberator_refs[0], @project_id).should.equal true
-				@TagsHandler.removeProjectFromAllTags.calledWith(@project.collaberator_refs[1], @project_id).should.equal true
-				@TagsHandler.removeProjectFromAllTags.calledWith(@project.readOnly_refs[0], @project_id).should.equal true
-				@TagsHandler.removeProjectFromAllTags.calledWith(@project.readOnly_refs[1], @project_id).should.equal true
-
+				@TagsHandler.removeProjectFromAllTags.calledWith("member-id-1", @project_id).should.equal true
+				@TagsHandler.removeProjectFromAllTags.calledWith("member-id-2", @project_id).should.equal true
 				done()
 
 	describe "restoreProject", ->
@@ -112,20 +138,4 @@ describe 'Project deleter', ->
 					$unset: { archived: true }
 				}).should.equal true
 				done()
-
-	describe "findArchivedProjects", ->
-		beforeEach ->
-			@projects = ["mock-project"]
-			@owner_id = "mock-owner-id"
-			@callback = sinon.stub()
-			@Project.find = sinon.stub().callsArgWith(2, null, @projects)
-			@deleter.findArchivedProjects @owner_id, @fields = "name lastModified", @callback
-
-		it "should find the archived projects for the owner", ->
-			@Project.find
-				.calledWith(owner_ref: @owner_id, archived: true, @fields)
-				.should.equal true
-
-		it "should return the projects", ->
-			@callback.calledWith(null, @projects).should.equal true
 

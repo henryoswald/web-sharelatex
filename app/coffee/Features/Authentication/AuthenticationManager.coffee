@@ -1,8 +1,10 @@
-Settings = require 'settings-sharelatex'
+Settings = require "settings-sharelatex"
 User = require("../../models/User").User
 {db, ObjectId} = require("../../infrastructure/mongojs")
 crypto = require 'crypto'
 bcrypt = require 'bcrypt'
+
+BCRYPT_ROUNDS = Settings?.security?.bcryptRounds or 12
 
 module.exports = AuthenticationManager =
 	authenticate: (query, password, callback = (error, user) ->) ->
@@ -16,7 +18,9 @@ module.exports = AuthenticationManager =
 					bcrypt.compare password, user.hashedPassword, (error, match) ->
 						return callback(error) if error?
 						if match
-							callback null, user
+							AuthenticationManager.checkRounds user, user.hashedPassword, password, (err) ->
+								return callback(err) if err?
+								callback null, user
 						else
 							callback null, null
 				else
@@ -25,7 +29,14 @@ module.exports = AuthenticationManager =
 				callback null, null
 
 	setUserPassword: (user_id, password, callback = (error) ->) ->
-		bcrypt.genSalt 7, (error, salt) ->
+		if (Settings.passwordStrengthOptions?.length?.max? and
+				Settings.passwordStrengthOptions?.length?.max < password.length)
+			return callback("password is too long")
+		if (Settings.passwordStrengthOptions?.length?.min? and
+				Settings.passwordStrengthOptions?.length?.min > password.length)
+			return callback("password is too short")
+
+		bcrypt.genSalt BCRYPT_ROUNDS, (error, salt) ->
 			return callback(error) if error?
 			bcrypt.hash password, salt, (error, hash) ->
 				return callback(error) if error?
@@ -36,19 +47,10 @@ module.exports = AuthenticationManager =
 					$unset: password: true
 				}, callback)
 
-	getAuthToken: (user_id, callback = (error, auth_token) ->) ->
-		db.users.findOne { _id: ObjectId(user_id.toString()) }, { auth_token : true }, (error, user) =>
-			return callback(error) if error?
-			return callback(new Error("user could not be found: #{user_id}")) if !user?
-			if user.auth_token?
-				callback null, user.auth_token
-			else
-				@_createSecureToken (error, auth_token) ->
-					db.users.update { _id: ObjectId(user_id.toString()) }, { $set : auth_token: auth_token }, (error) ->
-						return callback(error) if error?
-						callback null, auth_token
-		
-	_createSecureToken: (callback = (error, token) ->) ->
-		crypto.randomBytes 48, (error, buffer) ->
-			return callback(error) if error?
-			callback null, buffer.toString("hex")
+	checkRounds: (user, hashedPassword, password, callback = (error) ->) ->
+		# check current number of rounds and rehash if necessary
+		currentRounds = bcrypt.getRounds hashedPassword
+		if currentRounds < BCRYPT_ROUNDS
+			AuthenticationManager.setUserPassword user._id, password, callback
+		else
+			callback()

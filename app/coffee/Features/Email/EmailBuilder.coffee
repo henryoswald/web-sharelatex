@@ -2,101 +2,187 @@ _ = require('underscore')
 
 PersonalEmailLayout = require("./Layouts/PersonalEmailLayout")
 NotificationEmailLayout = require("./Layouts/NotificationEmailLayout")
+BaseWithHeaderEmailLayout = require("./Layouts/BaseWithHeaderEmailLayout") 
+
+SingleCTAEmailBody = require("./Bodies/SingleCTAEmailBody")
+
+
+settings = require("settings-sharelatex")
+
+
 
 templates = {}
 
-templates.welcome =	
-	subject:  _.template "Welcome to ShareLaTeX"
+
+templates.registered =
+	subject:  _.template "Activate your #{settings.appName} Account"
 	layout: PersonalEmailLayout
-	type:"lifecycle"
-	compiledTemplate: _.template '''
-Hi <%= first_name %>, thanks for signing up to ShareLaTeX. If you ever get lost, you can log in again <a href="https://www.sharelatex.com/login">here</a>.
-<p>
-I’m the co-founder of ShareLaTeX and I love talking to our users about our service. Please feel free to get in touch by replying to this email and I will get back to you within a day.
+	type: "notification"
+	plainTextTemplate: _.template """
+Congratulations, you've just had an account created for you on #{settings.appName} with the email address "<%= to %>".
 
-<p>
+Click here to set your password and log in: <%= setNewPasswordUrl %>
 
-Regards, <br>
-Henry <br>
-ShareLaTeX Co-founder
-'''
+If you have any questions or problems, please contact #{settings.adminEmail}
+"""
+	compiledTemplate: _.template """
+<p>Congratulations, you've just had an account created for you on #{settings.appName} with the email address "<%= to %>".</p>
 
-templates.canceledSubscription = 
+<p><a href="<%= setNewPasswordUrl %>">Click here to set your password and log in.</a></p>
+
+<p>If you have any questions or problems, please contact <a href="mailto:#{settings.adminEmail}">#{settings.adminEmail}</a>.</p>
+"""
+
+
+templates.canceledSubscription =
 	subject:  _.template "ShareLaTeX thoughts"
 	layout: PersonalEmailLayout
 	type:"lifecycle"
-	compiledTemplate: _.template '''
+	plainTextTemplate: _.template """
 Hi <%= first_name %>,
 
-I am sorry to see you cancelled your premium account. I wondered if you would mind giving me some advice on what the site is lacking at the moment? Criticism from our users about what is missing is the best thing for us to help improve the tool. 
+I'm sorry to see you cancelled your ShareLaTeX premium account. Would you mind giving me some advice on what the site is lacking at the moment via this survey?:
 
-Thank you in advance. 
+https://sharelatex.typeform.com/to/f5lBiZ
+
+Thank you in advance.
+
+Henry
+
+ShareLaTeX Co-founder
+"""
+	compiledTemplate: _.template '''
+<p>Hi <%= first_name %>,</p>
+
+<p>I'm sorry to see you cancelled your ShareLaTeX premium account. Would you mind giving me some advice on what the site is lacking at the moment via <a href="https://sharelatex.typeform.com/to/f5lBiZ">this survey</a>?</p>
+
+<p>Thank you in advance.</p>
 
 <p>
 Henry <br>
 ShareLaTeX Co-founder
+</p>
 '''
 
-templates.passwordResetRequested =	
-	subject:  _.template "Password Reset - ShareLatex.com"
-	layout: NotificationEmailLayout
+
+templates.passwordResetRequested =
+	subject:  _.template "Password Reset - #{settings.appName}"
+	layout: BaseWithHeaderEmailLayout
 	type:"notification"
-	compiledTemplate: _.template '''
-<h1 class="h1">Password Reset</h1>
-<p>
-We got a request to reset your ShareLaTeX password.
-<p>
-<center>
-	<div style="width:200px;background-color:#0069CC;border:1px solid #02A9D6;border-radius:4px;padding:15px; margin:10px 5px">
-		<div style="padding-right:10px;padding-left:10px">
-			<a href="<%= setNewPasswordUrl %>" style="text-decoration:none" target="_blank">
-				<span style= "font-size:16px;font-family:Arial;font-weight:bold;color:#fff;white-space:nowrap;display:block; text-align:center">
-		  			Reset password
-				</span>
-			</a>
-		</div>
-	</div>
-</center>
+	plainTextTemplate: _.template """
+Password Reset
+
+We got a request to reset your #{settings.appName} password.
+
+Click this link to reset your password: <%= setNewPasswordUrl %>
 
 If you ignore this message, your password won't be changed.
-<p>
+
 If you didn't request a password reset, let us know.
 
-</p>
-<p>Thank you</p>
-<p> <a href="https://www.sharelatex.com"> ShareLatex.com </a></p>
-'''
+Thank you
 
-templates.projectSharedWithYou = 
-	subject: _.template "<%= owner.email %> wants to share <%= project.name %> with you"
-	layout: NotificationEmailLayout
+#{settings.appName} - <%= siteUrl %>
+"""
+	compiledTemplate: (opts) -> 
+		SingleCTAEmailBody({
+			title: "Password Reset"
+			greeting: "Hi,"
+			message: "We got a request to reset your #{settings.appName} password."
+			secondaryMessage: "If you ignore this message, your password won't be changed.<br>If you didn't request a password reset, let us know."
+			ctaText: "Reset password"
+			ctaURL: opts.setNewPasswordUrl
+			gmailGoToAction: null
+		})
+
+
+templates.projectInvite =
+	subject: _.template "<%= project.name %> - shared by <%= owner.email %>"
+	layout: BaseWithHeaderEmailLayout
 	type:"notification"
-	compiledTemplate: _.template '''
-<h1 class="h1"><%= owner.email %> wants to share <a href="<%= project.url %>">'<%= project.name %>'</a> with you</h1>
-<p>&nbsp;</p>
-<center>
-	<div style="width:200px;background-color:#0069CC;border:1px solid #02A9D6;border-radius:4px;padding:15px; margin:10px 5px">
-		<div style="padding-right:10px;padding-left:10px">
-			<a href="<%= project.url %>" style="text-decoration:none" target="_blank">
-				<span style= "font-size:16px;font-family:Arial;font-weight:bold;color:#fff;white-space:nowrap;display:block; text-align:center">
-		  			View Project
-				</span>
-			</a>
-		</div>
-	</div>
-</center>
-<p> Thank you</p>
-<p> <a href="https://www.sharelatex.com"> ShareLatex.com </a></p>
-'''
+	plainTextTemplate: _.template """
+Hi, <%= owner.email %> wants to share '<%= project.name %>' with you.
+
+Follow this link to view the project: <%= inviteUrl %>
+
+Thank you
+
+#{settings.appName} - <%= siteUrl %>
+"""
+	compiledTemplate: (opts) -> 
+		SingleCTAEmailBody({
+			title: "#{ opts.project.name } &ndash; shared by #{ opts.owner.email }"
+			greeting: "Hi,"
+			message: "#{ opts.owner.email } wants to share &ldquo;#{ opts.project.name }&rdquo; with you."
+			secondaryMessage: null
+			ctaText: "View project"
+			ctaURL: opts.inviteUrl
+			gmailGoToAction: 
+				target: opts.inviteUrl
+				name: "View project"
+				description: "Join #{ opts.project.name } at ShareLaTeX"
+		})
+
+templates.completeJoinGroupAccount =
+	subject: _.template "Verify Email to join <%= group_name %> group"
+	layout: BaseWithHeaderEmailLayout
+	type:"notification"
+	plainTextTemplate: _.template """
+Hi, please verify your email to join the <%= group_name %> and get your free premium account
+
+Click this link to verify now: <%= completeJoinUrl %>
+
+Thank You
+
+#{settings.appName} - <%= siteUrl %>
+"""
+	compiledTemplate: (opts) -> 
+		SingleCTAEmailBody({
+			title: "Verify Email to join #{ opts.group_name } group"
+			greeting: "Hi,"
+			message: "please verify your email to join the #{ opts.group_name } group and get your free premium account."
+			secondaryMessage: null
+			ctaText: "Verify now"
+			ctaURL: opts.completeJoinUrl
+			gmailGoToAction: null
+		})
+
+
+templates.testEmail =
+	subject: _.template "A Test Email from ShareLaTeX"
+	layout: BaseWithHeaderEmailLayout
+	type:"notification"
+	plainTextTemplate: _.template """
+Hi,
+
+This is a test email sent from ShareLaTeX.
+
+#{settings.appName} - <%= siteUrl %>
+"""
+	compiledTemplate: (opts) -> 
+		SingleCTAEmailBody({
+			title: "A Test Email from ShareLaTeX"
+			greeting: "Hi,"
+			message: "This is a test email sent from ShareLaTeX"
+			secondaryMessage: null
+			ctaText: "Open ShareLaTeX"
+			ctaURL: "/"
+			gmailGoToAction: null
+		})
+
 
 module.exports =
+	templates: templates
 
 	buildEmail: (templateName, opts)->
 		template = templates[templateName]
+		opts.siteUrl = settings.siteUrl
 		opts.body = template.compiledTemplate(opts)
+		if settings.email?.templates?.customFooter?
+			opts.body += settings.email?.templates?.customFooter
 		return {
 			subject : template.subject(opts)
 			html: template.layout(opts)
+			text: template?.plainTextTemplate?(opts)
 			type:template.type
 		}
-

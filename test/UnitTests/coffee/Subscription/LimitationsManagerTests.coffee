@@ -6,17 +6,17 @@ Settings = require("settings-sharelatex")
 
 describe "LimitationsManager", ->
 	beforeEach ->
-		@project = { _id: "project-id" }
-		@user = { _id: "user-id", features:{} }
+		@project = { _id: @project_id = "project-id" }
+		@user = { _id: @user_id = "user-id", features:{} }
 		@Project =
 			findById: (project_id, fields, callback) =>
 				if project_id == @project_id
 					callback null, @project
 				else
 					callback null, null
-		@User =
-			findById: (user_id, callback) =>
-				if user_id == @user.id
+		@UserGetter =
+			getUser: (user_id, filter, callback) =>
+				if user_id == @user_id
 					callback null, @user
 				else
 					callback null, null
@@ -26,15 +26,18 @@ describe "LimitationsManager", ->
 
 		@LimitationsManager = SandboxedModule.require modulePath, requires:
 			'../../models/Project' : Project: @Project
-			'../../models/User' : User: @User
+			'../User/UserGetter' : @UserGetter
 			'./SubscriptionLocator':@SubscriptionLocator
 			'settings-sharelatex' : @Settings = {}
+			"../Collaborators/CollaboratorsHandler": @CollaboratorsHandler = {}
+			"../Collaborators/CollaboratorsInviteHandler": @CollaboratorsInviteHandler = {}
 			'logger-sharelatex':log:->
 
 	describe "allowedNumberOfCollaboratorsInProject", ->
 		describe "when the project is owned by a user without a subscription", ->
 			beforeEach ->
 				@Settings.defaultPlanCode = collaborators: 23
+				@project.owner_ref = @user_id
 				delete @user.features
 				@callback = sinon.stub()
 				@LimitationsManager.allowedNumberOfCollaboratorsInProject(@project_id, @callback)
@@ -44,6 +47,7 @@ describe "LimitationsManager", ->
 
 		describe "when the project is owned by a user with a subscription", ->
 			beforeEach ->
+				@project.owner_ref = @user_id
 				@user.features =
 					collaborators: 21
 				@callback = sinon.stub()
@@ -52,21 +56,31 @@ describe "LimitationsManager", ->
 			it "should return the number of collaborators the user is allowed", ->
 				@callback.calledWith(null, @user.features.collaborators).should.equal true
 	
-	describe "currentNumberOfCollaboratorsInProject", ->
-		beforeEach ->
-			@project.collaberator_refs = ["one", "two"]
-			@project.readOnly_refs = ["three"]
-			@callback = sinon.stub()
-			@LimitationsManager.currentNumberOfCollaboratorsInProject(@project_id, @callback)
+	describe "allowedNumberOfCollaboratorsForUser", ->
+		describe "when the user has no features", ->
+			beforeEach ->
+				@Settings.defaultPlanCode = collaborators: 23
+				delete @user.features
+				@callback = sinon.stub()
+				@LimitationsManager.allowedNumberOfCollaboratorsForUser(@user_id, @callback)
 
-		it "should return the total number of collaborators", ->
-			@callback.calledWith(null, 3).should.equal true
+			it "should return the default number", ->
+				@callback.calledWith(null, @Settings.defaultPlanCode.collaborators).should.equal true
 
-	describe "isCollaboratorLimitReached", ->
+		describe "when the user has features", ->
+			beforeEach ->
+				@user.features =
+					collaborators: 21
+				@callback = sinon.stub()
+				@LimitationsManager.allowedNumberOfCollaboratorsForUser(@user_id, @callback)
+
+			it "should return the number of collaborators the user is allowed", ->
+				@callback.calledWith(null, @user.features.collaborators).should.equal true
+
+	describe "canAddXCollaborators", ->
 		beforeEach ->
-			sinon.stub @LimitationsManager,
-					   "currentNumberOfCollaboratorsInProject",
-					   (project_id, callback) => callback(null, @current_number)
+			@CollaboratorsHandler.getCollaboratorCount = (project_id, callback) => callback(null, @current_number)
+			@CollaboratorsInviteHandler.getInviteCount = (project_id, callback) => callback(null, @invite_count)
 			sinon.stub @LimitationsManager,
 					   "allowedNumberOfCollaboratorsInProject",
 					   (project_id, callback) => callback(null, @allowed_number)
@@ -76,7 +90,28 @@ describe "LimitationsManager", ->
 			beforeEach ->
 				@current_number = 1
 				@allowed_number = 2
-				@LimitationsManager.isCollaboratorLimitReached(@project_id, @callback)
+				@invite_count = 0
+				@LimitationsManager.canAddXCollaborators(@project_id, 1, @callback)
+
+			it "should return true", ->
+				@callback.calledWith(null, true).should.equal true
+
+		describe "when the project has fewer collaborators and invites than allowed", ->
+			beforeEach ->
+				@current_number = 1
+				@allowed_number = 4
+				@invite_count = 1
+				@LimitationsManager.canAddXCollaborators(@project_id, 1, @callback)
+
+			it "should return true", ->
+				@callback.calledWith(null, true).should.equal true
+
+		describe "when the project has fewer collaborators than allowed but I want to add more than allowed", ->
+			beforeEach ->
+				@current_number = 1
+				@allowed_number = 2
+				@invite_count = 0
+				@LimitationsManager.canAddXCollaborators(@project_id, 2, @callback)
 
 			it "should return false", ->
 				@callback.calledWith(null, false).should.equal true
@@ -85,20 +120,41 @@ describe "LimitationsManager", ->
 			beforeEach ->
 				@current_number = 3
 				@allowed_number = 2
-				@LimitationsManager.isCollaboratorLimitReached(@project_id, @callback)
+				@invite_count = 0
+				@LimitationsManager.canAddXCollaborators(@project_id, 1, @callback)
 
-			it "should return true", ->
-				@callback.calledWith(null, true).should.equal true
+			it "should return false", ->
+				@callback.calledWith(null, false).should.equal true
 
 		describe "when the project has infinite collaborators", ->
 			beforeEach ->
 				@current_number = 100
 				@allowed_number = -1
-				@LimitationsManager.isCollaboratorLimitReached(@project_id, @callback)
+				@invite_count = 0
+				@LimitationsManager.canAddXCollaborators(@project_id, 1, @callback)
+
+			it "should return true", ->
+				@callback.calledWith(null, true).should.equal true
+
+		describe 'when the project has more invites than allowed', ->
+			beforeEach ->
+				@current_number = 0
+				@allowed_number = 2
+				@invite_count = 2
+				@LimitationsManager.canAddXCollaborators(@project_id, 1, @callback)
 
 			it "should return false", ->
 				@callback.calledWith(null, false).should.equal true
 
+		describe 'when the project has more invites and collaborators than allowed', ->
+			beforeEach ->
+				@current_number = 1
+				@allowed_number = 2
+				@invite_count = 1
+				@LimitationsManager.canAddXCollaborators(@project_id, 1, @callback)
+
+			it "should return false", ->
+				@callback.calledWith(null, false).should.equal true
 
 	describe "userHasSubscription", ->
 		beforeEach ->
@@ -126,85 +182,74 @@ describe "LimitationsManager", ->
 		it "should return the subscription", (done)->
 			stubbedSubscription = {freeTrial:{}, token:""}
 			@SubscriptionLocator.getUsersSubscription.callsArgWith(1, null, stubbedSubscription)
-			@LimitationsManager.userHasSubscription @user, (err, hasSubOrFreeTrial, subscription)->
+			@LimitationsManager.userHasSubscription @user, (err, hasSubOrIsGroupMember, subscription)->
 				subscription.should.deep.equal stubbedSubscription
 				done()
 
-	describe "userHasFreeTrial", ->
+		describe "when user has a custom account", ->
+
+			beforeEach ->
+				@fakeSubscription = {customAccount: true}
+				@SubscriptionLocator.getUsersSubscription.callsArgWith(1, null, @fakeSubscription)
+
+			it 'should return true', (done) ->
+				@LimitationsManager.userHasSubscription @user, (err, hasSubscription, subscription)->
+					hasSubscription.should.equal true
+					done()
+
+			it 'should return the subscription', (done) ->
+				@LimitationsManager.userHasSubscription @user, (err, hasSubscription, subscription)=>
+					subscription.should.deep.equal @fakeSubscription
+					done()
+
+	describe "userIsMemberOfGroupSubscription", ->
 		beforeEach ->
-			@SubscriptionLocator.getUsersSubscription = sinon.stub()
+			@SubscriptionLocator.getMemberSubscriptions = sinon.stub()
 
-		it "should return true if the free trial is set", (done)->
-			@SubscriptionLocator.getUsersSubscription.callsArgWith(1, null, freeTrial:{expiresAt : "1234"})
-			@LimitationsManager.userHasFreeTrial @user, (err, hasFreeTrial)->
-				hasFreeTrial.should.equal true
+		it "should return false if there are no groups subcriptions", (done)->
+			@SubscriptionLocator.getMemberSubscriptions.callsArgWith(1, null, [])
+			@LimitationsManager.userIsMemberOfGroupSubscription @user, (err, isMember)->
+				isMember.should.equal false
 				done()
 
-		it "should return false if the free trial is not set", (done)->
-			@SubscriptionLocator.getUsersSubscription.callsArgWith(1, null, {freeTrial:{}})
-			@LimitationsManager.userHasFreeTrial @user, (err, hasFreeTrial)->
-				hasFreeTrial.should.equal false
+		it "should return true if there are no groups subcriptions", (done)->
+			@SubscriptionLocator.getMemberSubscriptions.callsArgWith(1, null, subscriptions = ["mock-subscription"])
+			@LimitationsManager.userIsMemberOfGroupSubscription @user, (err, isMember, retSubscriptions)->
+				isMember.should.equal true
+				retSubscriptions.should.equal subscriptions
 				done()
 
-		it "should return false if the free trial is not there", (done)->
-			@SubscriptionLocator.getUsersSubscription.callsArgWith(1, null, {})
-			@LimitationsManager.userHasFreeTrial @user, (err, hasFreeTrial)->
-				hasFreeTrial.should.equal false
-				done()
-
-		it "should return false if the free trial is undefined", (done)->
-			@SubscriptionLocator.getUsersSubscription.callsArgWith(1)
-			@LimitationsManager.userHasFreeTrial @user, (err, hasFreeTrial)->
-				hasFreeTrial.should.equal false
-				done()
-
-		it "should return the subscription", (done)->
-			stubbedSubscription = {freeTrial:{}, token:""}
-			@SubscriptionLocator.getUsersSubscription.callsArgWith(1, null, stubbedSubscription)
-			@LimitationsManager.userHasFreeTrial @user, (err, hasSubOrFreeTrial, subscription)->
-				subscription.should.deep.equal stubbedSubscription
-				done()
-
-	describe "userHasSubscriptionOrFreeTrial", ->
+	describe "userHasSubscriptionOrIsGroupMember", ->
 		beforeEach ->
-			@hasFreeTrial = true
-			@hasSubscription = true
-			@LimitationsManager.userHasFreeTrial = sinon.stub().callsArgWith(1, null, @hasFreeTrial)
-			@LimitationsManager.userHasSubscription = sinon.stub().callsArgWith(1, null, @hasSubscription)
+			@LimitationsManager.userIsMemberOfGroupSubscription = sinon.stub()
+			@LimitationsManager.userHasSubscription = sinon.stub()
 
 		it "should return true if both are true", (done)->
-			@hasFreeTrial = true
-			@hasSubscription = true
-			@LimitationsManager.userHasSubscriptionOrFreeTrial @user, (err, hasSubOrFreeTrial)->
-				hasSubOrFreeTrial.should.equal true
+			@LimitationsManager.userIsMemberOfGroupSubscription.callsArgWith(1, null, true)
+			@LimitationsManager.userHasSubscription.callsArgWith(1, null, true)
+			@LimitationsManager.userHasSubscriptionOrIsGroupMember @user, (err, hasSubOrIsGroupMember)->
+				hasSubOrIsGroupMember.should.equal true
 				done()
 
 		it "should return true if one is true", (done)->
-			@hasFreeTrial = false
-			@hasSubscription = true
-			@LimitationsManager.userHasSubscriptionOrFreeTrial @user, (err, hasSubOrFreeTrial)->
-				hasSubOrFreeTrial.should.equal true
+			@LimitationsManager.userIsMemberOfGroupSubscription.callsArgWith(1, null, true)
+			@LimitationsManager.userHasSubscription.callsArgWith(1, null, false)
+			@LimitationsManager.userHasSubscriptionOrIsGroupMember @user, (err, hasSubOrIsGroupMember)->
+				hasSubOrIsGroupMember.should.equal true
 				done()
 
 		it "should return true if other is true", (done)->
-			@hasFreeTrial = true
-			@hasSubscription = false
-			@LimitationsManager.userHasSubscriptionOrFreeTrial @user, (err, hasSubOrFreeTrial)->
-				hasSubOrFreeTrial.should.equal true
+			@LimitationsManager.userIsMemberOfGroupSubscription.callsArgWith(1, null, false)
+			@LimitationsManager.userHasSubscription.callsArgWith(1, null, true)
+			@LimitationsManager.userHasSubscriptionOrIsGroupMember @user, (err, hasSubOrIsGroupMember)->
+				hasSubOrIsGroupMember.should.equal true
 				done()
 
 		it "should return false if both are false", (done)->
-			@hasSubscription = false
-			@hasFreeTrial = false
-			@LimitationsManager.userHasSubscriptionOrFreeTrial @user, (err, hasSubOrFreeTrial)->
-				hasSubOrFreeTrial.should.equal true
-				done()
-
-		it "should return the subscription", (done)->
-			stubbedSubscription = {freeTrial:{}, token:""}
-			@LimitationsManager.userHasSubscription = sinon.stub().callsArgWith(1, null, null, stubbedSubscription)
-			@LimitationsManager.userHasSubscriptionOrFreeTrial @user, (err, hasSubOrFreeTrial, subscription)->
-				subscription.should.deep.equal stubbedSubscription
+			@LimitationsManager.userIsMemberOfGroupSubscription.callsArgWith(1, null, false)
+			@LimitationsManager.userHasSubscription.callsArgWith(1, null, false)
+			@LimitationsManager.userHasSubscriptionOrIsGroupMember @user, (err, hasSubOrIsGroupMember)->
+				hasSubOrIsGroupMember.should.equal false
 				done()
 
 	describe "hasGroupMembersLimitReached", ->
@@ -212,24 +257,25 @@ describe "LimitationsManager", ->
 		beforeEach ->
 			@user_id = "12312"
 			@subscription =
-				membersLimit: 2
+				membersLimit: 3
 				member_ids: ["", ""]
+				invited_emails: ["bob@example.com"]
 
-		it "should return true if the limit is hit", (done)->
+		it "should return true if the limit is hit (including members and invites)", (done)->
 			@SubscriptionLocator.getUsersSubscription.callsArgWith(1, null, @subscription)
 			@LimitationsManager.hasGroupMembersLimitReached @user_id, (err, limitReached)->
 				limitReached.should.equal true
 				done()
 
-		it "should return false if the limit is not hit", (done)->
-			@subscription.membersLimit = 3
+		it "should return false if the limit is not hit (including members and invites)", (done)->
+			@subscription.membersLimit = 4
 			@SubscriptionLocator.getUsersSubscription.callsArgWith(1, null, @subscription)
 			@LimitationsManager.hasGroupMembersLimitReached @user_id, (err, limitReached)->
 				limitReached.should.equal false
 				done()
-				
-		it "should return true if the limit has been exceded", (done)->
-			@subscription.membersLimit = 0
+
+		it "should return true if the limit has been exceded (including members and invites)", (done)->
+			@subscription.membersLimit = 2
 			@SubscriptionLocator.getUsersSubscription.callsArgWith(1, null, @subscription)
 			@LimitationsManager.hasGroupMembersLimitReached @user_id, (err, limitReached)->
 				limitReached.should.equal true

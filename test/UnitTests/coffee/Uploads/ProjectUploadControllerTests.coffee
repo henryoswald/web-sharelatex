@@ -15,13 +15,16 @@ describe "ProjectUploadController", ->
 		@metrics =
 			Timer: class Timer
 				done: sinon.stub()
+		@AuthenticationController =
+			getLoggedInUserId: sinon.stub().returns(@user_id)
 		@ProjectUploadController = SandboxedModule.require modulePath, requires:
 			"./ProjectUploadManager" : @ProjectUploadManager = {}
 			"./FileSystemImportManager" : @FileSystemImportManager = {}
-			"logger-sharelatex" : @logger = {log: sinon.stub(), error: sinon.stub()}
-			"../../infrastructure/Metrics": @metrics
+			"logger-sharelatex" : @logger = {log: sinon.stub(), error: sinon.stub(), err:->}
+			"metrics-sharelatex": @metrics
+			'../Authentication/AuthenticationController': @AuthenticationController
 			"fs" : @fs = {}
-		
+
 	describe "uploadProject", ->
 		beforeEach ->
 			@path = "/path/to/file/on/disk.zip"
@@ -29,7 +32,7 @@ describe "ProjectUploadController", ->
 			@req.files =
 				qqfile:
 					path: @path
-					name: @name
+					originalname: @name
 			@req.session =
 				user:
 					_id: @user_id
@@ -55,13 +58,13 @@ describe "ProjectUploadController", ->
 					.createProjectFromZipArchive
 					.calledWith(sinon.match.any, "filename", sinon.match.any)
 					.should.equal true
-				
+
 			it "should create a project from the zip archive", ->
 				@ProjectUploadManager
 					.createProjectFromZipArchive
 					.calledWith(sinon.match.any, sinon.match.any, @path)
 					.should.equal true
-				
+
 			it "should return a successful response to the FileUploader client", ->
 				expect(@res.body).to.deep.equal
 					success: true
@@ -102,7 +105,10 @@ describe "ProjectUploadController", ->
 			@req.files =
 				qqfile:
 					path: @path
-					name: @name
+					originalname: @name
+			@req.session =
+				user:
+					_id: @user_id
 			@req.params =
 				Project_id: @project_id
 			@req.query =
@@ -115,35 +121,20 @@ describe "ProjectUploadController", ->
 			beforeEach ->
 				@entity =
 					_id : "1234"
-				@FileSystemImportManager.addEntity = sinon.stub().callsArgWith(5, null, @entity)
+					type: 'file'
+				@FileSystemImportManager.addEntity = sinon.stub().callsArgWith(6, null, @entity)
 				@ProjectUploadController.uploadFile @req, @res
 
-			it "should insert the file into the correct project", ->
+			it "should insert the file", ->
 				@FileSystemImportManager.addEntity
-					.calledWith(@project_id)
-					.should.equal true
-
-			it "should insert the file into the provided folder", ->
-				@FileSystemImportManager.addEntity
-					.calledWith(sinon.match.any, @folder_id)
-					.should.equal true
-
-			it "should insert the file with the correct name", ->
-				@FileSystemImportManager.addEntity
-					.calledWith(sinon.match.any, sinon.match.any, @name)
-					.should.equal true
-
-			it "should insert the file from the uploaded path", ->
-				@FileSystemImportManager.addEntity
-					.calledWith(sinon.match.any, sinon.match.any, sinon.match.any, @path)
+					.calledWith(@user_id, @project_id, @folder_id, @name, @path)
 					.should.equal true
 
 			it "should return a successful response to the FileUploader client", ->
-				console.log @res.body
 				expect(@res.body).to.deep.equal
 					success: true
 					entity_id: @entity._id
-
+					entity_type: 'file'
 
 			it "should output a log line", ->
 				@logger.log
@@ -159,7 +150,7 @@ describe "ProjectUploadController", ->
 		describe "when FileSystemImportManager.addEntity returns an error", ->
 			beforeEach ->
 				@FileSystemImportManager.addEntity = sinon.stub()
-					.callsArgWith(5, new Error("Sorry something went wrong"))
+					.callsArgWith(6, new Error("Sorry something went wrong"))
 				@ProjectUploadController.uploadFile @req, @res
 
 			it "should return an unsuccessful response to the FileUploader client", ->
@@ -171,3 +162,12 @@ describe "ProjectUploadController", ->
 					.calledWith(sinon.match.any, "error uploading file")
 					.should.equal true
 
+		describe "with a bad request", ->
+
+			beforeEach ->
+				@req.files.qqfile.originalname = ""
+				@ProjectUploadController.uploadFile @req, @res
+
+			it "should return a a non success response", ->
+				expect(@res.body).to.deep.equal
+					success: false

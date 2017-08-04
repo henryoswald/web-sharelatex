@@ -1,31 +1,36 @@
 logger = require('logger-sharelatex')
 async = require("async")
-metrics = require('../../infrastructure/Metrics')
+metrics = require('metrics-sharelatex')
 Settings = require('settings-sharelatex')
 ObjectId = require('mongoose').Types.ObjectId	
 Project = require('../../models/Project').Project
 Folder = require('../../models/Folder').Folder
 ProjectEntityHandler = require('./ProjectEntityHandler')
+ProjectDetailsHandler = require('./ProjectDetailsHandler')
 User = require('../../models/User').User
 fs = require('fs')
 Path = require "path"
 _ = require "underscore"
 
-module.exports =
+module.exports = ProjectCreationHandler =
+
 	createBlankProject : (owner_id, projectName, callback = (error, project) ->)->
 		metrics.inc("project-creation")
-		logger.log owner_id:owner_id, projectName:projectName, "creating blank project"
-		rootFolder = new Folder {'name':'rootFolder'}
-		project = new Project
-			 owner_ref  : new ObjectId(owner_id)
-			 name       : projectName
-			 useClsi2   : true
-		project.rootFolder[0] = rootFolder
-		User.findById owner_id, "ace.spellCheckLanguage", (err, user)->
-			project.spellCheckLanguage = user.ace.spellCheckLanguage
-			project.save (err)->
-				return callback(err) if err?
-				callback err, project
+		ProjectDetailsHandler.validateProjectName projectName, (error) ->
+			return callback(error) if error?
+			logger.log owner_id:owner_id, projectName:projectName, "creating blank project"
+			rootFolder = new Folder {'name':'rootFolder'}
+			project = new Project
+				 owner_ref  : new ObjectId(owner_id)
+				 name       : projectName
+			if Settings.currentImageName?
+				project.imageName = Settings.currentImageName
+			project.rootFolder[0] = rootFolder
+			User.findById owner_id, "ace.spellCheckLanguage", (err, user)->
+				project.spellCheckLanguage = user.ace.spellCheckLanguage
+				project.save (err)->
+					return callback(err) if err?
+					callback err, project
 
 	createBasicProject :  (owner_id, projectName, callback = (error, project) ->)->
 		self = @
@@ -33,8 +38,10 @@ module.exports =
 			return callback(error) if error?
 			self._buildTemplate "mainbasic.tex", owner_id, projectName, (error, docLines)->
 				return callback(error) if error?
-				ProjectEntityHandler.addDoc project._id, project.rootFolder[0]._id, "main.tex", docLines, "", (error, doc)->
-					return callback(error) if error?
+				ProjectEntityHandler.addDoc project._id, project.rootFolder[0]._id, "main.tex", docLines, (error, doc)->
+					if error?
+						logger.err err:error, "error adding doc when creating basic project"
+						return callback(error)
 					ProjectEntityHandler.setRootDoc project._id, doc._id, (error) ->
 						callback(error, project)
 
@@ -46,13 +53,13 @@ module.exports =
 				(callback) ->
 					self._buildTemplate "main.tex", owner_id, projectName, (error, docLines)->
 						return callback(error) if error?
-						ProjectEntityHandler.addDoc project._id, project.rootFolder[0]._id, "main.tex", docLines, "", (error, doc)->
+						ProjectEntityHandler.addDoc project._id, project.rootFolder[0]._id, "main.tex", docLines, (error, doc)->
 							return callback(error) if error?
 							ProjectEntityHandler.setRootDoc project._id, doc._id, callback
 				(callback) ->
 					self._buildTemplate "references.bib", owner_id, projectName, (error, docLines)->
 						return callback(error) if error?
-						ProjectEntityHandler.addDoc project._id, project.rootFolder[0]._id, "references.bib", docLines, "", (error, doc)->
+						ProjectEntityHandler.addDoc project._id, project.rootFolder[0]._id, "references.bib", docLines, (error, doc)->
 							callback(error)
 				(callback) ->
 					universePath = Path.resolve(__dirname + "/../../../templates/project_files/universe.jpg")
@@ -76,5 +83,10 @@ module.exports =
 				output = _.template(template.toString(), data)
 				callback null, output.split("\n")
 
+metrics.timeAsyncMethod(
+	ProjectCreationHandler, 'createBlankProject',
+	'mongo.ProjectCreationHandler',
+	logger
+)
 
 

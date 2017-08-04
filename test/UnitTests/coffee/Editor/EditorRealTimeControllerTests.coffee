@@ -5,15 +5,13 @@ modulePath = require('path').join __dirname, '../../../../app/js/Features/Editor
 
 describe "EditorRealTimeController", ->
 	beforeEach ->
+		@rclient =
+			publish: sinon.stub()
 		@EditorRealTimeController = SandboxedModule.require modulePath, requires:
-			"redis": 
-				createClient: () ->
-					auth:->
+			"../../infrastructure/RedisWrapper": 
+				client: () => @rclient
 			"../../infrastructure/Server" : io: @io = {}
-		@EditorRealTimeController.rclientPub = publish: sinon.stub()
-		@EditorRealTimeController.rclientSub =
-			subscribe: sinon.stub()
-			on: sinon.stub()
+			"settings-sharelatex":{redis:{}}
 		
 		@room_id = "room-id"
 		@message = "message-to-editor"
@@ -24,7 +22,7 @@ describe "EditorRealTimeController", ->
 			@EditorRealTimeController.emitToRoom(@room_id, @message, @payload...)
 
 		it "should publish the message to redis", ->
-			@EditorRealTimeController.rclientPub.publish
+			@rclient.publish
 				.calledWith("editor-events", JSON.stringify(
 					room_id: @room_id,
 					message: @message
@@ -41,49 +39,3 @@ describe "EditorRealTimeController", ->
 			@EditorRealTimeController.emitToRoom
 				.calledWith("all", @message, @payload...)
 				.should.equal true
-			
-	describe "listenForEditorEvents", ->
-		beforeEach ->
-			@EditorRealTimeController._processEditorEvent = sinon.stub()
-			@EditorRealTimeController.listenForEditorEvents()
-
-		it "should subscribe to the editor-events channel", ->
-			@EditorRealTimeController.rclientSub.subscribe
-				.calledWith("editor-events")
-				.should.equal true
-
-		it "should process the events with _processEditorEvent", ->
-			@EditorRealTimeController.rclientSub.on
-				.calledWith("message", sinon.match.func)
-				.should.equal true
-
-	describe "_processEditorEvent", ->
-		describe "with a designated room", ->
-			beforeEach ->
-				@io.sockets =
-					in: sinon.stub().returns(emit: @emit = sinon.stub())
-				data = JSON.stringify
-					room_id: @room_id
-					message: @message
-					payload: @payload
-				@EditorRealTimeController._processEditorEvent("editor-events", data)
-
-			it "should send the message to all clients in the room", ->
-				@io.sockets.in
-					.calledWith(@room_id)
-					.should.equal true
-				@emit.calledWith(@message, @payload...).should.equal true
-
-		describe "when emitting to all", ->
-			beforeEach ->
-				@io.sockets =
-					emit: @emit = sinon.stub()
-				data = JSON.stringify
-					room_id: "all"
-					message: @message
-					payload: @payload
-				@EditorRealTimeController._processEditorEvent("editor-events", data)
-
-			it "should send the message to all clients", ->
-				@emit.calledWith(@message, @payload...).should.equal true
-			

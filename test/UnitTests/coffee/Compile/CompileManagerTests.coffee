@@ -15,28 +15,34 @@ describe "CompileManager", ->
 		@CompileManager = SandboxedModule.require modulePath, requires:
 			"settings-sharelatex": @settings =
 				redis: web: {host: "localhost", port: 42}
-			"redis":
-				createClient: () => @rclient = { auth: () -> }
+			"../../infrastructure/RedisWrapper":
+				client: () => @rclient = { auth: () -> }
 			"../DocumentUpdater/DocumentUpdaterHandler": @DocumentUpdaterHandler = {}
 			"../Project/ProjectRootDocManager": @ProjectRootDocManager = {}
 			"../../models/Project": Project: @Project = {}
+			"../User/UserGetter": @UserGetter = {}
 			"./ClsiManager": @ClsiManager = {}
 			"../../infrastructure/RateLimiter": @ratelimiter
-			"../../infrastructure/Metrics": @Metrics =
+			"metrics-sharelatex": @Metrics =
 				Timer: class Timer
 					done: sinon.stub()
 				inc: sinon.stub()
-			"logger-sharelatex": @logger = { log: sinon.stub() }
+			"logger-sharelatex": @logger = { log: sinon.stub(), warn: sinon.stub() }
 		@project_id = "mock-project-id-123"
 		@user_id = "mock-user-id-123"
 		@callback = sinon.stub()
+		@limits = {
+			timeout: 42
+		}
 
+	
 	describe "compile", ->
 		beforeEach ->
 			@CompileManager._checkIfRecentlyCompiled = sinon.stub().callsArgWith(2, null, false)
 			@CompileManager._ensureRootDocumentIsSet = sinon.stub().callsArgWith(1, null)
 			@DocumentUpdaterHandler.flushProjectToMongo = sinon.stub().callsArgWith(1, null)
-			@ClsiManager.sendRequest = sinon.stub().callsArgWith(2, null, @status = "mock-status")
+			@CompileManager.getProjectCompileLimits = sinon.stub().callsArgWith(1, null, @limits)
+			@ClsiManager.sendRequest = sinon.stub().callsArgWith(3, null, @status = "mock-status", @outputFiles = "mock output files", @output = "mock output")
 
 		describe "succesfully", ->
 			beforeEach ->
@@ -58,14 +64,21 @@ describe "CompileManager", ->
 					.calledWith(@project_id)
 					.should.equal true
 
-			it "should run the compile with the new compiler API", ->
-				@ClsiManager.sendRequest
+			it "should get the project compile limits", ->
+				@CompileManager.getProjectCompileLimits
 					.calledWith(@project_id)
 					.should.equal true
 
-			it "should call the callback", ->
+			it "should run the compile with the compile limits", ->
+				@ClsiManager.sendRequest
+					.calledWith(@project_id, @user_id, {
+						timeout: @limits.timeout
+					})
+					.should.equal true
+
+			it "should call the callback with the output", ->
 				@callback
-					.calledWith(null, @status)
+					.calledWith(null, @status, @outputFiles, @output)
 					.should.equal true
 
 			it "should time the compile", ->
@@ -77,15 +90,12 @@ describe "CompileManager", ->
 					.should.equal true
 				
 		describe "when the project has been recently compiled", ->
-			beforeEach ->
+			it "should return", (done)->
 				@CompileManager._checkIfAutoCompileLimitHasBeenHit = (_, cb)-> cb(null, true)
 				@CompileManager._checkIfRecentlyCompiled = sinon.stub().callsArgWith(2, null, true)
-				@CompileManager.compile @project_id, @user_id, {}, @callback
-
-			it "should return the callback with an error", ->
-				@callback
-					.calledWith(new Error("project was recently compiled so not continuing"))
-					.should.equal true
+				@CompileManager.compile @project_id, @user_id, {}, (err, status)->
+					status.should.equal "too-recently-compiled"
+					done()
 
 		describe "should check the rate limit", ->
 			it "should return", (done)->
@@ -93,26 +103,53 @@ describe "CompileManager", ->
 				@CompileManager.compile @project_id, @user_id, {}, (err, status)->
 					status.should.equal "autocompile-backoff"
 					done()
-
-	describe "getLogLines", ->
+					
+	describe "getProjectCompileLimits", ->
 		beforeEach ->
-			@ClsiManager.getLogLines = sinon.stub().callsArgWith(1, null, @lines = ["log", "lines"])
-			@CompileManager.getLogLines @project_id, @callback
-
-		it "should call the new api", ->
-			@ClsiManager.getLogLines
+			@features = {
+				compileTimeout:   @timeout = 42
+				compileGroup:     @group = "priority"
+			}
+			@Project.findById = sinon.stub().callsArgWith(2, null, @project = { owner_ref: @owner_id = "owner-id-123" })
+			@UserGetter.getUser = sinon.stub().callsArgWith(2, null, @user = { features: @features })
+			@CompileManager.getProjectCompileLimits @project_id, @callback
+			
+		it "should look up the owner of the project", ->
+			@Project.findById
+				.calledWith(@project_id, { owner_ref: 1 })
+				.should.equal true
+				
+		it "should look up the owner's features", ->
+			@UserGetter.getUser
+				.calledWith(@project.owner_ref, { features: 1 })
+				.should.equal true
+				
+		it "should return the limits", ->
+			@callback
+				.calledWith(null, {
+					timeout:      @timeout
+					compileGroup: @group
+				})
+				.should.equal true
+				
+	describe "deleteAuxFiles", ->
+		beforeEach ->
+			@CompileManager.getProjectCompileLimits = sinon.stub().callsArgWith 1, null, @limits = { compileGroup: "mock-compile-group" }
+			@ClsiManager.deleteAuxFiles = sinon.stub().callsArg(3)
+			@CompileManager.deleteAuxFiles @project_id, @user_id, @callback
+			
+		it "should look up the compile group to use", ->
+			@CompileManager.getProjectCompileLimits
 				.calledWith(@project_id)
 				.should.equal true
-
-		it "should call the callback with the lines", ->
-			@callback
-				.calledWith(null, @lines)
+				
+		it "should delete the aux files", ->
+			@ClsiManager.deleteAuxFiles
+				.calledWith(@project_id, @user_id, @limits)
 				.should.equal true
-
-		it "should increase the log count metric", ->
-			@Metrics.inc
-				.calledWith("editor.raw-logs")
-				.should.equal true
+				
+		it "should call the callback", ->
+			@callback.called.should.equal true
 
 	describe "_checkIfRecentlyCompiled", ->
 		describe "when the key exists in redis", ->
@@ -201,9 +238,9 @@ describe "CompileManager", ->
 			@ratelimiter.addCount.callsArgWith(1, null, true)
 			@CompileManager._checkIfAutoCompileLimitHasBeenHit true, (err, canCompile)=>
 				args = @ratelimiter.addCount.args[0][0]
-				args.throttle.should.equal 10
+				args.throttle.should.equal 25
 				args.subjectName.should.equal "everyone"
-				args.timeInterval.should.equal 15
+				args.timeInterval.should.equal 20
 				args.endpointName.should.equal "auto_compile"
 				canCompile.should.equal true
 				done()
@@ -219,3 +256,22 @@ describe "CompileManager", ->
 			@CompileManager._checkIfAutoCompileLimitHasBeenHit true, (err, canCompile)=>
 				canCompile.should.equal false
 				done()
+
+	describe "wordCount", ->
+		beforeEach ->
+			@CompileManager.getProjectCompileLimits = sinon.stub().callsArgWith 1, null, @limits = { compileGroup: "mock-compile-group" }
+			@ClsiManager.wordCount = sinon.stub().callsArg(4)
+			@CompileManager.wordCount @project_id, @user_id, false, @callback
+			
+		it "should look up the compile group to use", ->
+			@CompileManager.getProjectCompileLimits
+				.calledWith(@project_id)
+				.should.equal true
+				
+		it "should call wordCount for project", ->
+			@ClsiManager.wordCount
+				.calledWith(@project_id, @user_id, false, @limits)
+				.should.equal true
+				
+		it "should call the callback", ->
+			@callback.called.should.equal true

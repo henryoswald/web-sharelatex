@@ -40,32 +40,34 @@ app.js
 app/js/*
 test/UnitTests/js/*
 test/smoke/js/*
+test/acceptance/js/*
 cookies.txt
 requestQueueWorker.js
 TpdsWorker.js
 BackgroundJobsWorker.js
+UserAndProjectPopulator.coffee
 
-public/js/history/versiondetail.js
-!public/js/libs/*
-public/js/*
-!public/js/ace/*
-!public/js/libs/*
-public/js/editor.js
-public/js/home.js
-public/js/forms.js
-public/js/gui.js
-public/js/admin.js
-public/js/history/*
-public/stylesheets/mainStyle.css
+public/js/*.js
+public/js/*.map
+public/js/libs/sharejs.js
+public/js/analytics/
+public/js/directives/
+public/js/filters/
+public/js/ide/
+public/js/main/
+public/js/modules/
+public/js/services/
+public/js/utils/
+
+public/stylesheets/style.css
 public/brand/plans.css
 public/minjs/
 
-public/js/main.js
 Gemfile.lock
-
-app/views/external
 
 *.swp
 .DS_Store
 
+app/views/external
 
+/modules/

@@ -1,0 +1,507 @@
+@import "./editor/file-tree.less";
+@import "./editor/history.less";
+@import "./editor/toolbar.less";
+@import "./editor/left-menu.less";
+@import "./editor/pdf.less";
+@import "./editor/enago.less";
+@import "./editor/share.less";
+@import "./editor/chat.less";
+@import "./editor/binary-file.less";
+@import "./editor/search.less";
+@import "./editor/publish-template.less";
+@import "./editor/online-users.less";
+@import "./editor/hotkeys.less";
+@import "./editor/review-panel.less";
+@import "./editor/feature-onboarding.less";
+
+@keyframes blink {
+	0% { 
+		opacity: 0.2;
+	}
+	20% { 
+		opacity: 1;
+	}
+	100% { 
+		opacity: 0.2;
+	}
+}
+
+.full-size {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: 0;
+	right: 0;
+}
+
+.global-alerts {
+	height: 0;
+	margin-top: 2px;
+	text-align: center;
+
+	.alert {
+		display: inline-block;
+		text-align: left;
+		min-width: 400px;
+		padding: (@line-height-computed / 4);
+		font-size: 14px;
+		margin-bottom: (@line-height-computed / 4);
+		position: relative;
+		z-index: 20;
+	}
+}
+	#try-reconnect-now-button {
+		margin-left: 20px;
+	}
+
+#ide-body {
+	.full-size;
+	top: 40px;
+}
+
+#editor {
+	.full-size;
+}
+
+.loading-screen {
+	display: flex;
+	flex-direction: column;
+	justify-content: center;
+	align-items: center;
+	width: 100%;
+	height: 100%;
+	background-color: #FFF;
+}
+	.loading-screen-lion-container {
+		width: 15%;
+		min-width: 200px;
+		text-align: center;
+	}
+		.loading-screen-lion {
+			position: relative;
+			width: 100%;
+			padding-top: 86.2%;
+			height: 0;
+			background: url(/img/brand/lion-grey.svg) no-repeat bottom / 100%;
+
+    		&::after {
+				content: '';
+				position: absolute;
+				height: inherit;
+				right: 0;
+				bottom: 0;
+				left: 0;
+				background: url(/img/brand/lion.svg) no-repeat bottom / 100%;
+				transition: height .5s;
+    		}
+		}
+		.loading-screen-label {
+			margin: 0;
+			padding-top: 1em;
+			font-size: 2em;
+			color: @gray-dark;
+		}
+			.loading-screen-ellip {
+				animation: blink 1.4s both infinite;
+				&:nth-child(2) {
+					animation-delay: 0.2s;
+				}
+				&:nth-child(3) {
+					animation-delay: 0.4s;
+				}
+			}
+
+		.loading-screen-error {
+			margin: 0;
+			padding-top: 1em;
+			color: @state-danger-text;
+		}
+
+
+.loading-panel {
+	.full-size;
+	padding-top: 10rem;
+	font-family: @font-family-serif;
+	text-align: center;
+	background-color: #fafafa;
+}
+
+.error-panel {
+	.full-size;
+	padding: @line-height-computed;
+	background-color: #fafafa;
+	.alert {
+		max-width: 400px;
+		margin: auto;
+	}
+}
+
+.project-name {
+	.name {
+		display: inline-block;
+		max-width: 250px;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		vertical-align: top;
+		padding: 6px;
+		color: @gray;
+		font-weight: 700;
+		white-space: nowrap;
+	}
+	input {
+		height: 30px;
+		margin-top: 4px;
+		text-align: center;
+		padding: 6px;
+		font-weight: 700;
+	}
+	a.rename {
+		visibility: hidden;
+		display: inline-block;
+		color: @gray-light;
+		padding: 5px;
+		border-radius: @border-radius-small;
+		&:hover {
+			text-shadow: 0 1px 0 rgba(0, 0, 0, 0.25);
+			color: @gray-dark;
+			text-decoration: none;
+		}
+	}
+	&:hover {
+		a.rename {
+			visibility: visible;
+		}
+	}
+}
+
+// The internal components of the aceEditor directive
+.ace-editor-wrapper {
+	.full-size;
+	.undo-conflict-warning {
+		position: absolute;
+		top: 0;
+		right: 0;
+		left: 0;
+		z-index: 10;
+	}
+	.ace-editor-body {
+		width: 100%;
+		height: 100%;
+	}
+	.spelling-highlight {
+		position: absolute;
+		background-image: url(/img/spellcheck-underline.png);
+		@media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 192dpi) {
+			background-image: url(/img/spellcheck-underline@2x.png);
+			background-size: 5px 4px;
+		}
+		background-repeat: repeat-x;
+		background-position: bottom left;
+	}
+	.remote-cursor {
+		position: absolute;
+		border-left: 2px solid transparent;
+		.nubbin {
+			height: 5px;
+			width: 5px;
+			position: absolute;
+			left: -2px;
+		}
+	}
+	.annotation-label {
+		padding: (@line-height-computed / 4) (@line-height-computed / 2);
+		font-size: 0.8rem;
+		z-index: 100;
+		font-family: @font-family-sans-serif;
+		color: white;
+		font-weight: 700;
+		white-space: nowrap;
+	}
+	.annotation {
+		position: absolute;
+		z-index: 2;
+	}
+	.highlights-before-label, .highlights-after-label {
+		position: absolute;
+		right: @line-height-computed;
+		z-index: 1;
+	}
+	.highlights-before-label {
+		top:   @line-height-computed / 2;
+	}
+	.highlights-after-label {
+		bottom: @line-height-computed / 2;
+	}
+}
+
+// Hack to solve an issue where scrollbars aren't visible in Safari.
+// Safari seems to clip part of the scrollbar element. By giving the 
+// element a background, we're telling Safari that it *really* needs to 
+// paint the whole area. See https://github.com/ajaxorg/ace/issues/2872
+.ace_scrollbar-inner {
+	background-color: #FFF;
+	opacity: 0.01;
+
+	.ace_dark & {
+		background-color: #000;
+	}
+}
+
+.ui-layout-resizer {
+	width: 6px;
+	background-color: #f4f4f4;
+	border-left: 1px solid @toolbar-border-color;
+	border-right: 1px solid @toolbar-border-color;
+	.ui-layout-toggler {
+		color: #999;
+		font-family: FontAwesome;
+		font-style: normal;
+		font-weight: normal;
+		line-height: 1;
+		-webkit-font-smoothing: antialiased;
+		-moz-osx-font-smoothing: grayscale;
+		font-size: 16px !important;
+		line-height: 50px;
+		&:hover {
+			background-color: #ddd;
+			color: #333;
+		}
+	}
+}
+.ui-layout-resizer-west.ui-layout-resizer-open, .ui-layout-resizer-east.ui-layout-resizer-closed {
+	.ui-layout-toggler {
+		&:before {
+			content: "\f104"
+		}
+	}
+}
+.ui-layout-resizer-east.ui-layout-resizer-open, .ui-layout-resizer-west.ui-layout-resizer-closed {
+	.ui-layout-toggler {
+		&:before {
+			content: "\f105"
+		}
+	}
+}
+.ui-layout-resizer-dragging {
+	background-color: #ddd;
+}
+
+.context-menu {
+	position: fixed;
+	z-index: 100;
+}
+
+.editor-dark {
+	color: @gray-lighter;
+	background-color: @editor-dark-background-color;
+	
+	.ui-layout-resizer {
+		background-color: darken(@editor-dark-background-color, 10%);
+		border: none;
+	}
+	
+	.btn-default {
+		color: white;
+		background-color: @gray;
+		border-color: darken(@gray-dark, 10%);
+		&:hover {
+			background-color: darken(@gray, 5%);
+			border-color: darken(@gray-dark, 20%);
+			
+		}
+	}
+}
+
+.modal-alert {
+	margin-top:10px;
+	margin-bottom:0px;
+}
+
+// vertically centre the "connection down" modal so it does not hide
+// the reconnecting indicator
+
+.modal.lock-editor-modal {
+	display: flex !important;
+	.modal-dialog {
+		margin: auto;
+	}
+}
+
+.sl_references_search_hint-varDefault {
+	position: absolute;
+	bottom: -22px;
+	left: -1px;
+	right: 0px;
+	text-align: center;
+	padding: 2px;
+	background: rgb(202, 214, 250);
+	border: 1px solid lightgray;
+	box-shadow: 3px 3px 5px rgba(0,0,0,.2);
+
+	span {
+		color: black;
+	}
+}
+
+.sl_references_search_hint-varButton {
+	position: absolute;
+	bottom: -65px;
+	left: -1px;
+	right: 0px;
+	padding: 0 6px 6px;
+	text-align: center;
+	background: #fbfbfb;
+	color: #FFF;
+	box-shadow: 3px 3px 5px rgba(0,0,0,.2);
+	border-left: 1px solid lightgray;
+	font-family: @font-family-sans-serif;
+	font-size: 13px;
+	font-weight: 600;
+
+	hr {
+		margin: 6px -6px;
+	}
+
+	button {
+		width: 100%;
+		font-size: inherit;
+		line-height: 1.4;
+	}
+
+	span {
+		padding-left: 10px;
+	}
+
+	kbd {
+		display: block;
+		font-family: inherit;
+		font-size: 12px;
+		font-weight: normal;
+	}
+}
+
+// -- References Search Modal --
+.references-search-modal-backdrop {
+	// don't grey out the editor when the
+	// modal is active
+	background-color: transparent;
+}
+.references-search-modal {
+	// upgrade prompt
+	.references-search-upgrade-prompt {
+		padding: 24px;
+		padding-bottom: 48px;
+		.upgrade-prompt {
+			text-align: center;
+			width: 400px;
+			padding-top: 14px;
+			padding-bottom: 14px;
+			padding-left: 38px;
+			padding-right: 38px;
+			margin: auto;
+			background: white;
+			opacity: 0.95;
+			border-radius: 8px;
+			.message {
+				margin-top: 15px;
+				&.call-to-action {
+					font-weight: bold;
+				}
+				ul.list-unstyled {
+					text-align: left;
+				}
+			}
+			a.btn {
+				opacity: 1.0;
+			}
+		}
+	}
+	.search-form {
+		// position the spinner inside the input element
+		i.fa-spinner {
+			margin-top: -30px;
+		}
+	}
+	.alert-danger {
+		margin-top: 12px;
+		margin-bottom: 0px;
+	}
+	// search result items list
+	.search-results {
+		font-size: 12px;
+		.no-results-message {
+			font-size: 16px;
+		}
+		.search-result-hit {
+			&:hover {
+				cursor: pointer;
+			}
+			border-bottom: 1px solid #ddd;
+			padding: 8px;
+			&:last-child {
+				border-bottom: 1px solid transparent;
+			}
+			border-left: 4px solid transparent;
+			&.selected-search-result-hit {
+				background-color: @red;
+				color: white;
+				.hit-year.small {
+					color: white;
+				}
+				.hit-journal.small {
+					color: white;
+				}
+			}
+			.hit-title {
+				font-size: 1.3em;
+				font-style: italic;
+			}
+		}
+	}
+}
+
+.referencesImportModal {
+	.referencesImportPreview {
+		margin-top: 15px;
+		.referencesImportPreviewScroller {
+			font-family: monospace;
+			font-size: 0.8em;
+			max-height: 360px;
+			overflow: scroll;
+			white-space: pre;
+			padding: 8px 12px;
+			margin-bottom: 15px;
+			border: 1px solid @gray-lighter;
+			background-color: @gray-lightest;
+		}
+	}
+}
+
+.teaser-title,
+.dropbox-teaser-title {
+	margin-top: 0;
+	text-align: center;
+}
+
+.teaser-img,
+.dropbox-teaser-img {
+	.img-responsive;
+	margin-bottom: 5px;
+}
+
+.teaser-video-container,
+.dropbox-teaser-video-container {
+	margin-top: -@modal-inner-padding;
+	margin-left: -@modal-inner-padding;
+	margin-right: -@modal-inner-padding;
+	margin-bottom: 5px;
+	overflow: hidden;
+}
+
+.teaser-video,
+.dropbox-teaser-video {
+	width: 100%;
+	height: auto;
+	border-bottom: 1px solid @modal-header-border-color;
+}
+

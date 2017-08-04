@@ -4,36 +4,39 @@ PlansLocator = require("./PlansLocator")
 SubscriptionFormatters = require("./SubscriptionFormatters")
 LimitationsManager = require("./LimitationsManager")
 SubscriptionLocator = require("./SubscriptionLocator")
+logger = require('logger-sharelatex')
 _ = require("underscore")
 
 module.exports =
 
-	buildUsersSubscriptionViewModel: (user, callback) ->
-		SubscriptionLocator.getUsersSubscription user, (err, subscription)->
-				LimitationsManager.userHasFreeTrial user, (err, hasFreeTrial)->
-					LimitationsManager.userHasSubscription user, (err, hasSubscription)->
-						if hasSubscription
-							return callback(error) if error?
-							plan = PlansLocator.findLocalPlanInSettings(subscription.planCode)
-							RecurlyWrapper.getSubscription subscription.recurlySubscription_id, (err, recurlySubscription)->
-								callback null,
-									name: plan.name
-									nextPaymentDueAt: SubscriptionFormatters.formatDate(recurlySubscription.current_period_ends_at)
-									state: recurlySubscription.state
-									price: SubscriptionFormatters.formatPrice recurlySubscription.unit_amount_in_cents
-									planCode: subscription.planCode
-									groupPlan: subscription.groupPlan
-						else if hasFreeTrial
-							plan = PlansLocator.findLocalPlanInSettings(subscription.freeTrial.planCode)
-							callback null,
-								name: plan.name
-								state: "free-trial"
-								planCode: plan.planCode
-								groupPlan: subscription.groupPlan
-								expiresAt: SubscriptionFormatters.formatDate(subscription.freeTrial.expiresAt)
-						else
-							callback "User has no subscription"
-
+	buildUsersSubscriptionViewModel: (user, callback = (error, subscription, memberSubscriptions) ->) ->
+		SubscriptionLocator.getUsersSubscription user, (err, subscription) ->
+			return callback(err) if err?
+			SubscriptionLocator.getMemberSubscriptions user, (err, memberSubscriptions = []) ->
+				return callback(err) if err?
+				if subscription?
+					return callback(error) if error?
+					plan = PlansLocator.findLocalPlanInSettings(subscription.planCode)
+					if !plan?
+						err = new Error("No plan found for planCode '#{subscription.planCode}'")
+						logger.error {user_id: user._id, err}, "error getting subscription plan for user"
+						return callback(err)
+					RecurlyWrapper.getSubscription subscription.recurlySubscription_id, (err, recurlySubscription)->
+						tax = recurlySubscription?.tax_in_cents || 0
+						callback null, {
+							admin_id:subscription.admin_id
+							name: plan.name
+							nextPaymentDueAt: SubscriptionFormatters.formatDate(recurlySubscription?.current_period_ends_at)
+							state: recurlySubscription?.state
+							price: SubscriptionFormatters.formatPrice (recurlySubscription?.unit_amount_in_cents + tax), recurlySubscription?.currency
+							planCode: subscription.planCode
+							currency:recurlySubscription?.currency
+							taxRate:parseFloat(recurlySubscription?.tax_rate?._)
+							groupPlan: subscription.groupPlan
+							trial_ends_at:recurlySubscription?.trial_ends_at
+						}, memberSubscriptions
+				else
+					callback null, null, memberSubscriptions
 
 	buildViewModel : ->
 		plans = Settings.plans
@@ -41,7 +44,7 @@ module.exports =
 		allPlans = {}
 		plans.forEach (plan)->
 			allPlans[plan.planCode] = plan
-			
+
 		result =
 			allPlans: allPlans
 
@@ -51,7 +54,7 @@ module.exports =
 
 		result.studentAccounts = _.filter plans, (plan)->
 			plan.planCode.indexOf("student") != -1
-			
+
 		result.groupMonthlyPlans = _.filter plans, (plan)->
 			plan.groupPlan and !plan.annual
 
@@ -65,4 +68,3 @@ module.exports =
 			!plan.groupPlan and plan.annual and plan.planCode.indexOf("student") == -1
 
 		return result
-

@@ -28,6 +28,7 @@ describe "UserDeleter", ->
 			"../Newsletter/NewsletterManager":  @NewsletterManager
 			"../Subscription/SubscriptionHandler": @SubscriptionHandler
 			"../Project/ProjectDeleter": @ProjectDeleter
+			"logger-sharelatex": @logger = { log: sinon.stub() }
 
 	describe "deleteUser", ->
 
@@ -49,5 +50,5 @@ describe "UserDeleter", ->
 
 		it "should unsubscribe the user", (done)->
 			@UserDeleter.deleteUser @user._id, (err)=>
-				@SubscriptionHandler.cancelSubscription.calledWith(@user._id).should.equal true
+				@SubscriptionHandler.cancelSubscription.calledWith(@user).should.equal true
 				done()

@@ -10,6 +10,8 @@ describe "UserLocator", ->
 		@user = {_id:"12390i"}
 		@UserLocator = SandboxedModule.require modulePath, requires:
 			"../../infrastructure/mongojs": db: @db =  { users: {} }
+			"metrics-sharelatex": timeAsyncMethod: sinon.stub()
+			'logger-sharelatex' : { log: sinon.stub() }
 		@db.users =
 			findOne : sinon.stub().callsArgWith(1, null, @user)
 

@@ -1,11 +1,13 @@
 should = require('chai').should()
 modulePath = "../../../../app/js/Features/Project/ProjectDetailsHandler"
+Errors = require "../../../../app/js/Features/Errors/Errors"
 SandboxedModule = require('sandboxed-module')
 sinon = require('sinon')
 assert = require("chai").assert
+expect = require("chai").expect
 require('chai').should()
 
-describe 'Project details handler', ->
+describe 'ProjectDetailsHandler', ->
 
 	beforeEach ->
 		@project_id = "321l3j1kjkjl"
@@ -23,6 +25,7 @@ describe 'Project details handler', ->
 			getProject: sinon.stub().callsArgWith(2, null, @project)
 		@ProjectModel =
 			update: sinon.stub()
+			findOne: sinon.stub()
 		@UserGetter =
 			getUser: sinon.stub().callsArgWith(1, null, @user)
 		@tpdsUpdateSender =
@@ -47,12 +50,36 @@ describe 'Project details handler', ->
 				assert.equal(details.something, undefined)
 				done()
 
+		it "should return an error for a non-existent project", (done)->
+			@ProjectGetter.getProject.callsArg(2, null, null)
+			err = new Errors.NotFoundError("project not found")
+			@handler.getDetails "0123456789012345678901234", (error, details) =>
+				err.should.eql error
+				done()
+
 		it "should return the error", (done)->
 			error = "some error"
-			@ProjectGetter.getProjectWithoutDocLines.callsArgWith(1, error)
+			@ProjectGetter.getProject.callsArgWith(2, error)
 			@handler.getDetails @project_id, (err)=>
 				err.should.equal error
 				done()
+
+	describe "getProjectDescription", ->
+
+		it "should make a call to mongo just for the description", (done)->
+			@ProjectModel.findOne.callsArgWith(2)
+			@handler.getProjectDescription @project_id, (err, description)=>
+				@ProjectModel.findOne.calledWith({_id:@project_id}, "description").should.equal true
+				done()
+
+		it "should return what the mongo call returns", (done)->
+			err = "error"
+			description = "cool project"
+			@ProjectModel.findOne.callsArgWith(2, err, {description:description})
+			@handler.getProjectDescription @project_id, (returnedErr, returnedDescription)=>
+				err.should.equal returnedErr
+				description.should.equal returnedDescription
+				done()	
 
 	describe "setProjectDescription", ->
 
@@ -65,8 +92,11 @@ describe 'Project details handler', ->
 				@ProjectModel.update.calledWith({_id:@project_id}, {description:@description}).should.equal true
 				done()
 
+
+
 	describe "renameProject", ->
 		beforeEach ->
+			@handler.validateProjectName = sinon.stub().yields()
 			@ProjectModel.update.callsArgWith(2)
 			@newName = "new name here"
 
@@ -80,7 +110,34 @@ describe 'Project details handler', ->
 			@handler.renameProject @project_id, @newName, =>
 				@tpdsUpdateSender.moveEntity.calledWith({project_id:@project_id, project_name:@project.name, newProjectName:@newName}).should.equal true
 				done()
+		
+		it "should not do anything with an invalid name", (done) ->
+			@handler.validateProjectName = sinon.stub().yields(new Error("invalid name"))
+			@handler.renameProject @project_id, @newName, =>
+				@tpdsUpdateSender.moveEntity.called.should.equal false
+				@ProjectModel.update.called.should.equal false
+				done()
 
+	describe "validateProjectName", ->
+		it "should reject empty names", (done) ->
+			@handler.validateProjectName "", (error) ->
+				expect(error).to.exist
+				done()
+
+		it "should reject empty names with /s", (done) ->
+			@handler.validateProjectName "foo/bar", (error) ->
+				expect(error).to.exist
+				done()
+
+		it "should reject long names", (done) ->
+			@handler.validateProjectName new Array(1000).join("a"), (error) ->
+				expect(error).to.exist
+				done()
+
+		it "should accept normal names", (done) ->
+			@handler.validateProjectName "foobar", (error) ->
+				expect(error).to.not.exist
+				done()
 
 	describe "setPublicAccessLevel", ->
 		beforeEach ->

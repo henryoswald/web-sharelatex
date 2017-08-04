@@ -1,10 +1,11 @@
 settings = require('settings-sharelatex')
 logger = require('logger-sharelatex')
-slReqIdHelper = require('soa-req-id')
 path = require('path')
 Project = require('../../models/Project').Project
 keys = require('../../infrastructure/Keys')
-metrics = require("../../infrastructure/Metrics")
+metrics = require("metrics-sharelatex")
+request = require("request")
+CollaboratorsHandler = require('../Collaborators/CollaboratorsHandler')
 
 buildPath = (user_id, project_name, filePath)->
 	projectPath = path.join(project_name, "/", filePath)
@@ -12,43 +13,69 @@ buildPath = (user_id, project_name, filePath)->
 	fullPath = path.join("/user/", "#{user_id}", "/entity/",projectPath)
 	return fullPath
 
-queue = require('fairy').connect(settings.redis.fairy).queue(keys.queue.web_to_tpds_http_requests)
 
-module.exports =
 
-	_addEntity: (options, sl_req_id, callback = (err)->)->
+
+tpdsworkerEnabled = -> settings.apis.tpdsworker?.url?
+if !tpdsworkerEnabled()
+	logger.log "tpdsworker is not enabled, request will not be sent to it"
+
+module.exports = TpdsUpdateSender =
+
+	_enqueue: (group, method, job, callback)->
+		if !tpdsworkerEnabled()
+			return callback()
+		opts = 
+			uri:"#{settings.apis.tpdsworker.url}/enqueue/web_to_tpds_http_requests"
+			json :
+				group:group
+				method:method
+				job:job
+			method:"post"
+			timeout: (5 * 1000)
+		request opts, (err)->
+			if err?
+				logger.err err:err, "error queuing something in the tpdsworker, continuing anyway"
+				callback()
+			else
+				logger.log group:group, "successfully queued up job for tpdsworker"
+				callback()
+
+	_addEntity: (options, callback = (err)->)->
 		getProjectsUsersIds options.project_id, (err, user_id, allUserIds)->
-			logger.log project_id: options.project_id, user_id:user_id, path: options.path, uri:options.uri, sl_req_id:sl_req_id, rev:options.rev, "sending file to third party data store"
+			if err?
+				logger.err err:err, options:options, "error getting projects user ids"
+				return callback(err)
+			logger.log project_id: options.project_id, user_id:user_id, path: options.path, uri:options.uri, rev:options.rev, "sending file to third party data store"
 			postOptions =
 				method : "post"
-				headers: 
-					"sl_req_id":sl_req_id
+				headers:
 					sl_entity_rev:options.rev
 					sl_project_id:options.project_id
 					sl_all_user_ids:JSON.stringify(allUserIds)
 				uri : "#{settings.apis.thirdPartyDataStore.url}#{buildPath(user_id, options.project_name, options.path)}" 
 				title: "addFile"
 				streamOrigin : options.streamOrigin
-			queue.enqueue options.project_id, "pipeStreamFrom", postOptions, ->
-				logger.log project_id: options.project_id, user_id:user_id, path: options.path, uri:options.uri, sl_req_id:sl_req_id, rev:options.rev, "sending file to third party data store queued up for processing"
-				callback()
+			TpdsUpdateSender._enqueue options.project_id, "pipeStreamFrom", postOptions, (err)->
+				if err?
+					logger.err err:err,  project_id: options.project_id, user_id:user_id, path: options.path, uri:options.uri, rev:options.rev, "error sending file to third party data store queued up for processing"
+					return callback(err)
+				logger.log project_id: options.project_id, user_id:user_id, path: options.path, uri:options.uri, rev:options.rev, "sending file to third party data store queued up for processing"
+				callback(err)
 	
-	addFile : (options, sl_req_id, callback = (err)->)->
+	addFile : (options, callback = (err)->)->
 		metrics.inc("tpds.add-file")
-		{callback, sl_req_id} = slReqIdHelper.getCallbackAndReqId(callback, sl_req_id)
 		options.streamOrigin = settings.apis.filestore.url + path.join("/project/#{options.project_id}/file/","#{options.file_id}")
-		@_addEntity(options, sl_req_id, callback)
+		@_addEntity(options, callback)
 
-	addDoc : (options, sl_req_id, callback = (err)->)->
+	addDoc : (options, callback = (err)->)->
 		metrics.inc("tpds.add-doc")
-		{callback, sl_req_id} = slReqIdHelper.getCallbackAndReqId(callback, sl_req_id)
 		options.streamOrigin = settings.apis.docstore.pubUrl + path.join("/project/#{options.project_id}/doc/","#{options.doc_id}/raw")
-		@_addEntity(options, sl_req_id, callback)
+		@_addEntity(options, callback)
   
 
-	moveEntity : (options, sl_req_id, callback = (err)->)->
+	moveEntity : (options, callback = (err)->)->
 		metrics.inc("tpds.move-entity")
-		{callback, sl_req_id} = slReqIdHelper.getCallbackAndReqId(callback, sl_req_id)
 		if options.newProjectName?
 			startPath = path.join("/#{options.project_name}/")
 			endPath = path.join("/#{options.newProjectName}/")
@@ -56,13 +83,12 @@ module.exports =
 			startPath = mergeProjectNameAndPath(options.project_name, options.startPath)
 			endPath = mergeProjectNameAndPath(options.project_name, options.endPath)
 		getProjectsUsersIds options.project_id, (err, user_id, allUserIds)->
-			logger.log project_id: options.project_id, user_id:user_id, startPath:startPath, endPath:endPath, uri:options.uri, sl_req_id:sl_req_id,  "moving entity in third party data store"
+			logger.log project_id: options.project_id, user_id:user_id, startPath:startPath, endPath:endPath, uri:options.uri, "moving entity in third party data store"
 			moveOptions =
 				method : "put"
 				title:"moveEntity"
 				uri : "#{settings.apis.thirdPartyDataStore.url}/user/#{user_id}/entity"
 				headers: 
-					"sl_req_id":sl_req_id, 
 					sl_project_id:options.project_id, 
 					sl_entity_rev:options.rev
 					sl_all_user_ids:JSON.stringify(allUserIds)
@@ -70,29 +96,38 @@ module.exports =
 					user_id : user_id
 					endPath: endPath 
 					startPath: startPath 
-			queue.enqueue options.project_id, "standardHttpRequest", moveOptions, callback
+			TpdsUpdateSender._enqueue options.project_id, "standardHttpRequest", moveOptions, callback
 
-	deleteEntity : (options, sl_req_id, callback = (err)->)->
+	deleteEntity : (options, callback = (err)->)->
 		metrics.inc("tpds.delete-entity")
-		{callback, sl_req_id} = slReqIdHelper.getCallbackAndReqId(callback, sl_req_id)
 		getProjectsUsersIds options.project_id, (err, user_id, allUserIds)->
-			logger.log project_id: options.project_id, user_id:user_id, path: options.path, uri:options.uri,  sl_req_id:sl_req_id, "deleting entity in third party data store"
+			logger.log project_id: options.project_id, user_id:user_id, path: options.path, uri:options.uri, "deleting entity in third party data store"
 			deleteOptions =
 				method : "DELETE"
-				headers: 
-					"sl_req_id":sl_req_id, 
+				headers:
 					sl_project_id:options.project_id
 					sl_all_user_ids:JSON.stringify(allUserIds)
 				uri : "#{settings.apis.thirdPartyDataStore.url}#{buildPath(user_id, options.project_name, options.path)}"
 				title:"deleteEntity"
 				sl_all_user_ids:JSON.stringify(allUserIds)
-			queue.enqueue options.project_id, "standardHttpRequest", deleteOptions, callback
-
+			TpdsUpdateSender._enqueue options.project_id, "standardHttpRequest", deleteOptions, callback
+			
+	pollDropboxForUser: (user_id, callback = (err) ->) ->
+		metrics.inc("tpds.poll-dropbox")
+		logger.log user_id: user_id, "polling dropbox for user"
+		options =
+			method: "POST"
+			uri:"#{settings.apis.thirdPartyDataStore.url}/user/poll"
+			json:
+				user_ids: [user_id]
+		TpdsUpdateSender._enqueue "poll-dropbox:#{user_id}", "standardHttpRequest", options, callback
 
 getProjectsUsersIds = (project_id, callback = (err, owner_id, allUserIds)->)->
-	Project.findById project_id, "_id owner_ref readOnly_refs collaberator_refs", (err, project)->
-		allUserIds = [].concat(project.collaberator_refs).concat(project.readOnly_refs).concat(project.owner_ref)
-		callback err, project.owner_ref, allUserIds
+	Project.findById project_id, "_id owner_ref", (err, project) ->
+		return callback(err) if err?
+		CollaboratorsHandler.getMemberIds project_id, (err, member_ids) ->
+			return callback(err) if err?
+			callback err, project?.owner_ref, member_ids
 
 mergeProjectNameAndPath = (project_name, path)->
 	if(path.indexOf('/') == 0)

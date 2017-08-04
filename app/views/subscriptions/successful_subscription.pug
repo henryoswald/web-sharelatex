@@ -1,0 +1,39 @@
+extends ../layout
+
+block content
+	.content.content-alt
+		.container(ng-controller="SuccessfulSubscriptionController")
+			.row
+				.col-md-8.col-md-offset-2
+					.card(ng-cloak)
+						.page-header
+							h2 #{translate("thanks_for_subscribing")}
+						.alert.alert-success
+							p !{translate("next_payment_of_x_collectected_on_y", {paymentAmmount:"<strong>"+subscription.price+"</strong>", collectionDate:"<strong>"+subscription.nextPaymentDueAt+"</strong>"})}
+							p #{translate("to_modify_your_subscription_go_to")} 
+								a(href="/user/subscription")  #{translate("manage_subscription")}.
+						p
+							- if (subscription.groupPlan == true)
+								a.btn.btn-success.btn-large(href="/subscription/group") #{translate("add_your_first_group_member_now")}
+						p.letter-from-founders
+							p #{translate("thanks_for_subscribing_you_help_sl", {planName:subscription.name})}
+							p #{translate("need_anything_contact_us_at")} 
+								a(href='mailto:support@sharelatex.com') support@sharelatex.com
+								| . #{translate("goes_straight_to_our_inboxes")}.
+							p #{translate("regards")},
+								br
+								| Henry and James
+							.portraits
+								span.img-circle
+									img(src=buildImgPath("about/henry_oswald.jpg"))
+								| &nbsp;
+								span.img-circle
+									img(src=buildImgPath("about/james_allen.jpg"))
+						p
+							a.btn.btn-primary(href="/project") &lt; #{translate("back_to_your_projects")}
+
+	script(type="text/javascript").
+		window.ab = [
+			{step:1, bucket:"student_control", testName:"editor_plan"},
+			{step:1, bucket:"collab_test", testName:"editor_plan"},
+		]

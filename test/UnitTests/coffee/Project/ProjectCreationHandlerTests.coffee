@@ -2,6 +2,7 @@ spies = require('chai-spies')
 chai = require('chai').use(spies)
 sinon = require("sinon")
 should = chai.should()
+expect = chai.expect
 modulePath = "../../../../app/js/Features/Project/ProjectCreationHandler.js"
 SandboxedModule = require('sandboxed-module')
 Settings = require('settings-sharelatex')
@@ -30,9 +31,11 @@ describe 'ProjectCreationHandler', ->
 			constructor:(options)->
 				{@name} = options
 		@ProjectEntityHandler =
-			addDoc: sinon.stub().callsArgWith(5, null, {_id: docId})
+			addDoc: sinon.stub().callsArgWith(4, null, {_id: docId})
 			addFile: sinon.stub().callsArg(4)
 			setRootDoc: sinon.stub().callsArg(2)
+		@ProjectDetailsHandler =
+			validateProjectName: sinon.stub().yields()
 
 		@user = 
 			first_name:"first name here"
@@ -47,7 +50,13 @@ describe 'ProjectCreationHandler', ->
 			'../../models/Project':{Project:@ProjectModel}
 			'../../models/Folder':{Folder:@FolderModel}
 			'./ProjectEntityHandler':@ProjectEntityHandler
+			"./ProjectDetailsHandler":@ProjectDetailsHandler
+			"settings-sharelatex": @Settings = {}
 			'logger-sharelatex': {log:->}
+			"metrics-sharelatex": {
+				inc: ()->,
+				timeAsyncMethod: ()->
+			}
 
 	describe 'Creating a Blank project', ->
 		beforeEach ->
@@ -70,6 +79,18 @@ describe 'ProjectCreationHandler', ->
 				@handler.createBlankProject ownerId, projectName, (err, project)->
 					project.spellCheckLanguage.should.equal "de"
 					done()
+			
+			it "should set the imageName to currentImageName if set", (done) ->
+				@Settings.currentImageName = "mock-image-name"
+				@handler.createBlankProject ownerId, projectName, (err, project)=>
+					project.imageName.should.equal @Settings.currentImageName
+					done()
+			
+			it "should not set the imageName if no currentImageName", (done) ->
+				@Settings.currentImageName = null
+				@handler.createBlankProject ownerId, projectName, (err, project)=>
+					expect(project.imageName).to.not.exist
+					done()
 
 		describe "with an error", ->
 			beforeEach ->
@@ -78,6 +99,18 @@ describe 'ProjectCreationHandler', ->
 			
 			it 'should return the error to the callback', ->
 				should.exist @callback.args[0][0]
+		
+		describe "with an invalid name", ->
+			beforeEach ->
+				@ProjectDetailsHandler.validateProjectName = sinon.stub().yields(new Error("bad name"))
+				@handler.createBlankProject ownerId, projectName, @callback
+			
+			it 'should return the error to the callback', ->
+				should.exist @callback.args[0][0]
+			
+			it 'should not try to create the project', ->
+				@ProjectModel::save.called.should.equal false
+				
 
 	describe 'Creating a basic project', ->
 		beforeEach ->

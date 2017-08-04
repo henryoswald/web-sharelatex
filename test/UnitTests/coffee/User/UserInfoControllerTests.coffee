@@ -18,11 +18,16 @@ describe "UserInfoController", ->
 			updatePersonalInfo: sinon.stub()
 		@sanitizer = escape:(v)->v
 		sinon.spy @sanitizer, "escape"
+		@UserGetter = {}
+
+
 		@UserInfoController = SandboxedModule.require modulePath, requires:
-			"./UserGetter": @UserGetter = {}
+			"./UserGetter": @UserGetter
 			"./UserUpdater": @UserUpdater
 			"./UserDeleter": @UserDeleter
+			"logger-sharelatex": log:->
 			"sanitizer":@sanitizer
+			'../Authentication/AuthenticationController': @AuthenticationController = {getLoggedInUserId: sinon.stub()}
 
 		@req = new MockRequest()
 		@res = new MockResponse()
@@ -33,7 +38,10 @@ describe "UserInfoController", ->
 			@user =
 				_id: ObjectId()
 			@req.user = @user
+			@req.session.user = @user
 			@UserInfoController.sendFormattedPersonalInfo = sinon.stub()
+			@UserGetter.getUser = sinon.stub().callsArgWith(2, null, @user)
+			@AuthenticationController.getLoggedInUserId = sinon.stub().returns(@user._id)
 			@UserInfoController.getLoggedInUsersPersonalInfo(@req, @res, @next)
 
 		it "should call sendFormattedPersonalInfo", ->
@@ -85,18 +93,18 @@ describe "UserInfoController", ->
 				first_name: @user.first_name
 				last_name: @user.last_name
 				email: @user.email
-			@UserInfoController._formatPersonalInfo = sinon.stub().callsArgWith(1, null, @formattedInfo)
+			@UserInfoController.formatPersonalInfo = sinon.stub().returns(@formattedInfo)
 			@UserInfoController.sendFormattedPersonalInfo @user, @res
 
 		it "should format the user details for the response", ->
-			@UserInfoController._formatPersonalInfo
+			@UserInfoController.formatPersonalInfo
 				.calledWith(@user)
 				.should.equal true
 
 		it "should send the formatted details back to the client", ->
 			@res.body.should.equal JSON.stringify(@formattedInfo)
 
-	describe "_formatPersonalInfo", ->
+	describe "formatPersonalInfo", ->
 		it "should return the correctly formatted data", ->
 			@user =
 				_id: ObjectId()
@@ -105,60 +113,15 @@ describe "UserInfoController", ->
 				email: "doug@sharelatex.com"
 				password: "should-not-get-included"
 				signUpDate: new Date()
-			@UserInfoController._formatPersonalInfo @user, (error, info) =>
-				expect(info).to.deep.equal {
-					id: @user._id.toString()
-					first_name: @user.first_name
-					last_name: @user.last_name
-					email: @user.email
-					signUpDate: @user.signUpDate
-				}
-
-	describe "setPersonalInfo", ->
-
-		beforeEach ->
-			@req = 
-				session:
-					user:
-						_id:"123123j321jikuj90jlk"
-			@req.body = 
-				first_name: "bob"
-				last_name: "smith"
 				role:"student"
-				institution: "Sheffield"
-				notWanted: "something"
-
-		it "should send the data from the body to the user updater", (done)->
-
-			@UserUpdater.updatePersonalInfo.callsArgWith(2, null)
-			@res.send = (statusCode)=>
-				statusCode.should.equal 204
-				@UserUpdater.updatePersonalInfo.args[0][0].should.equal @req.session.user._id
-				args = @UserUpdater.updatePersonalInfo.args[0][1]
-				args.first_name.should.equal @req.body.first_name
-				args.last_name.should.equal @req.body.last_name
-				args.role.should.equal @req.body.role
-				args.institution.should.equal @req.body.institution
-				assert.equal args.notWanted, undefined
-				done()
-
-			@UserInfoController.updatePersonalInfo @req, @res
-
-		it "should sanitize the data", (done)->
-			@UserUpdater.updatePersonalInfo.callsArgWith(2, null)
-			@res.send = (statusCode)=>
-				@sanitizer.escape.calledWith(@req.body.first_name).should.equal true
-				@sanitizer.escape.calledWith(@req.body.last_name).should.equal true
-				@sanitizer.escape.calledWith(@req.body.role).should.equal true
-				@sanitizer.escape.calledWith(@req.body.institution).should.equal true
-				done()
-			@UserInfoController.updatePersonalInfo @req, @res
-
-		it "should send an error if the UpserUpdater returns on", (done)->
-			@UserUpdater.updatePersonalInfo.callsArgWith(2, "error")
-			@res.send = (statusCode)->
-				statusCode.should.equal 500
-				done()
-			@UserInfoController.updatePersonalInfo @req, @res
-
+				institution:"sheffield"
+			expect(@UserInfoController.formatPersonalInfo(@user)).to.deep.equal {
+				id: @user._id.toString()
+				first_name: @user.first_name
+				last_name: @user.last_name
+				email: @user.email
+				signUpDate: @user.signUpDate
+				role: @user.role
+				institution: @user.institution
+			}
 

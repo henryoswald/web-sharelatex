@@ -16,12 +16,21 @@ describe "UserController", ->
 
 		@user =
 			_id:@user_id
-			save:sinon.stub().callsArgWith(0)
+			save: sinon.stub().callsArgWith(0)
 			ace:{}
 
-		@UserDeleter = 
+		@req =
+			user: {}
+			session:
+				destroy:->
+				user :
+					_id : @user_id
+					email:"old@something.com"
+			body:{}
+
+		@UserDeleter =
 			deleteUser: sinon.stub().callsArgWith(1)
-		@UserLocator = 
+		@UserLocator =
 			findById: sinon.stub().callsArgWith(1, null, @user)
 		@User =
 			findById: sinon.stub().callsArgWith(1, null, @user)
@@ -29,14 +38,30 @@ describe "UserController", ->
 			unsubscribe: sinon.stub().callsArgWith(1)
 		@UserRegistrationHandler =
 			registerNewUser: sinon.stub()
-		@AuthenticationController = {}
+		@AuthenticationController =
+			establishUserSession: sinon.stub().callsArg(2)
+			getLoggedInUserId: sinon.stub().returns(@user._id)
+			getSessionUser: sinon.stub().returns(@req.session.user)
+			setInSessionUser: sinon.stub()
 		@AuthenticationManager =
 			authenticate: sinon.stub()
 			setUserPassword: sinon.stub()
 		@ReferalAllocator =
 			allocate:sinon.stub()
+		@SubscriptionDomainHandler =
+			autoAllocate:sinon.stub()
 		@UserUpdater =
 			changeEmailAddress:sinon.stub()
+		@settings =
+			siteUrl: "sharelatex.example.com"
+		@UserHandler =
+			populateGroupLicenceInvite:sinon.stub().callsArgWith(1)
+		@UserSessionsManager =
+			trackSession: sinon.stub()
+			untrackSession: sinon.stub()
+			revokeAllUserSessions: sinon.stub().callsArgWith(2, null)
+		@SudoModeHandler =
+			clearSudoMode: sinon.stub()
 		@UserController = SandboxedModule.require modulePath, requires:
 			"./UserLocator": @UserLocator
 			"./UserDeleter": @UserDeleter
@@ -47,26 +72,109 @@ describe "UserController", ->
 			"../Authentication/AuthenticationController": @AuthenticationController
 			"../Authentication/AuthenticationManager": @AuthenticationManager
 			"../Referal/ReferalAllocator":@ReferalAllocator
-			"logger-sharelatex": {log:->}
+			"../Subscription/SubscriptionDomainHandler":@SubscriptionDomainHandler
+			"./UserHandler":@UserHandler
+			"./UserSessionsManager": @UserSessionsManager
+			"../SudoMode/SudoModeHandler": @SudoModeHandler
+			"settings-sharelatex": @settings
+			"logger-sharelatex":
+				log:->
+				err:->
+			"metrics-sharelatex": inc:->
 
-
-		@req = 
-			session: 
-				destroy:->
-				user :
-					_id : @user_id
-			body:{}
-		@res = {}
+		@res =
+			send: sinon.stub()
+			sendStatus: sinon.stub()
+			json: sinon.stub()
 		@next = sinon.stub()
-	describe "deleteUser", ->
 
-		it "should delete the user", (done)->
+	describe 'tryDeleteUser', ->
 
-			@res.send = (code)=>
-				@UserDeleter.deleteUser.calledWith(@user_id)
+		beforeEach ->
+			@req.body.password = 'wat'
+			@req.logout = sinon.stub()
+			@req.session.destroy = sinon.stub().callsArgWith(0, null)
+			@AuthenticationController.getLoggedInUserId = sinon.stub().returns(@user._id)
+			@AuthenticationManager.authenticate = sinon.stub().callsArgWith(2, null, @user)
+			@UserDeleter.deleteUser = sinon.stub().callsArgWith(1, null)
+
+		it 'should send 200', (done) ->
+			@res.sendStatus = (code) =>
 				code.should.equal 200
 				done()
-			@UserController.deleteUser @req, @res
+			@UserController.tryDeleteUser @req, @res, @next
+
+		it 'should try to authenticate user', (done) ->
+			@res.sendStatus = (code) =>
+				@AuthenticationManager.authenticate.callCount.should.equal 1
+				@AuthenticationManager.authenticate.calledWith({_id: @user._id}, @req.body.password).should.equal true
+				done()
+			@UserController.tryDeleteUser @req, @res, @next
+
+		it 'should delete the user', (done) ->
+			@res.sendStatus = (code) =>
+				@UserDeleter.deleteUser.callCount.should.equal 1
+				@UserDeleter.deleteUser.calledWith(@user._id).should.equal true
+				done()
+			@UserController.tryDeleteUser @req, @res, @next
+
+		describe 'when no password is supplied', ->
+
+			beforeEach ->
+				@req.body.password = ''
+
+			it 'should return 403', (done) ->
+				@res.sendStatus = (code) =>
+					code.should.equal 403
+					done()
+				@UserController.tryDeleteUser @req, @res, @next
+
+		describe 'when authenticate produces an error', ->
+
+			beforeEach ->
+				@AuthenticationManager.authenticate = sinon.stub().callsArgWith(2, new Error('woops'))
+
+			it 'should call next with an error', (done) ->
+				@next = (err) =>
+					expect(err).to.not.equal null
+					expect(err).to.be.instanceof Error
+					done()
+				@UserController.tryDeleteUser @req, @res, @next
+
+		describe 'when authenticate does not produce a user', ->
+
+			beforeEach ->
+				@AuthenticationManager.authenticate = sinon.stub().callsArgWith(2, null, null)
+
+			it 'should return 403', (done) ->
+				@res.sendStatus = (code) =>
+					code.should.equal 403
+					done()
+				@UserController.tryDeleteUser @req, @res, @next
+
+		describe 'when deleteUser produces an error', ->
+
+			beforeEach ->
+				@UserDeleter.deleteUser = sinon.stub().callsArgWith(1, new Error('woops'))
+
+			it 'should call next with an error', (done) ->
+				@next = (err) =>
+					expect(err).to.not.equal null
+					expect(err).to.be.instanceof Error
+					done()
+				@UserController.tryDeleteUser @req, @res, @next
+
+		describe 'when session.destroy produces an error', ->
+
+			beforeEach ->
+				@req.session.destroy = sinon.stub().callsArgWith(0, new Error('woops'))
+
+			it 'should call next with an error', (done) ->
+				@next = (err) =>
+					expect(err).to.not.equal null
+					expect(err).to.be.instanceof Error
+					done()
+				@UserController.tryDeleteUser @req, @res, @next
 
 	describe "unsubscribe", ->
 
@@ -82,7 +190,7 @@ describe "UserController", ->
 
 		it "should call save", (done)->
 			@req.body = {}
-			@res.send = (code)=>
+			@res.sendStatus = (code)=>
 				@user.save.called.should.equal true
 				done()
 			@UserController.updateUserSettings @req, @res
@@ -90,51 +198,100 @@ describe "UserController", ->
 		it "should set the first name", (done)->
 			@req.body =
 				first_name: "bobby  "
-			@res.send = (code)=>
+			@res.sendStatus = (code)=>
 				@user.first_name.should.equal "bobby"
+				done()
+			@UserController.updateUserSettings @req, @res
+
+		it "should set the role", (done)->
+			@req.body =
+				role: "student"
+			@res.sendStatus = (code)=>
+				@user.role.should.equal "student"
+				done()
+			@UserController.updateUserSettings @req, @res
+
+		it "should set the institution", (done)->
+			@req.body =
+				institution: "MIT"
+			@res.sendStatus = (code)=>
+				@user.institution.should.equal "MIT"
 				done()
 			@UserController.updateUserSettings @req, @res
 
 		it "should set some props on ace", (done)->
 			@req.body =
-				theme: "something  "
-			@res.send = (code)=>
+				theme: "something"
+			@res.sendStatus = (code)=>
 				@user.ace.theme.should.equal "something"
-				done()
-			@UserController.updateUserSettings @req, @res
-
-
-		it "should return an error if the email address is null", (done)->
-			@req.body.email = null
-			@res.send = (code)->
-				code.should.equal 400
 				done()
 			@UserController.updateUserSettings @req, @res
 
 		it "should send an error if the email is 0 len", (done)->
 			@req.body.email = ""
-			@res.send = (code)->
+			@res.sendStatus = (code)->
 				code.should.equal 400
 				done()
 			@UserController.updateUserSettings @req, @res
 
 		it "should send an error if the email does not contain an @", (done)->
 			@req.body.email = "bob at something dot com"
-			@res.send = (code)->
+			@res.sendStatus = (code)->
 				code.should.equal 400
 				done()
 			@UserController.updateUserSettings @req, @res
 
 		it "should call the user updater with the new email and user _id", (done)->
-			@req.body.email = @newEmail
+			@req.body.email = @newEmail.toUpperCase()
 			@UserUpdater.changeEmailAddress.callsArgWith(2)
-			@res.send = (code)=>
+			@res.sendStatus = (code)=>
 				code.should.equal 200
 				@UserUpdater.changeEmailAddress.calledWith(@user_id, @newEmail).should.equal true
 				done()
 			@UserController.updateUserSettings @req, @res
 
+		it "should update the email on the session", (done)->
+			@req.body.email = @newEmail.toUpperCase()
+			@UserUpdater.changeEmailAddress.callsArgWith(2)
+			callcount = 0
+			@User.findById = (id, cb)=>
+				if ++callcount == 2
+					@user.email = @newEmail
+				cb(null, @user)
+			@res.sendStatus = (code)=>
+				code.should.equal 200
+				@AuthenticationController.setInSessionUser.calledWith(
+					@req, {email: @newEmail, first_name: undefined, last_name: undefined}
+				).should.equal true
+				done()
+			@UserController.updateUserSettings @req, @res
 
+		it "should call populateGroupLicenceInvite", (done)->
+			@req.body.email = @newEmail.toUpperCase()
+			@UserUpdater.changeEmailAddress.callsArgWith(2)
+			@res.sendStatus = (code)=>
+				code.should.equal 200
+				@UserHandler.populateGroupLicenceInvite.calledWith(@user).should.equal true
+				done()
+			@UserController.updateUserSettings @req, @res
+
+		describe 'when using an external auth source', ->
+
+			beforeEach ->
+				@UserUpdater.changeEmailAddress.callsArgWith(2)
+				@newEmail = 'someone23@example.com'
+				@settings.ldap = {active: true}
+
+			afterEach ->
+				delete @settings.ldap
+
+			it 'should not set a new email', (done) ->
+				@req.body.email = @newEmail
+				@res.sendStatus = (code)=>
+					code.should.equal 200
+					@UserUpdater.changeEmailAddress.calledWith(@user_id, @newEmail).should.equal false
+					done()
+				@UserController.updateUserSettings @req, @res
 
 	describe "logout", ->
 
@@ -148,63 +305,59 @@ describe "UserController", ->
 
 			@UserController.logout @req, @res
 
+		it 'should clear sudo-mode', (done) ->
+			@req.session.destroy = sinon.stub().callsArgWith(0)
+			@SudoModeHandler.clearSudoMode = sinon.stub()
+			@res.redirect = (url)=>
+				url.should.equal "/login"
+				@SudoModeHandler.clearSudoMode.callCount.should.equal 1
+				@SudoModeHandler.clearSudoMode.calledWith(@user._id).should.equal true
+				done()
+
+			@UserController.logout @req, @res
+
 
 	describe "register", ->
-
-		it "should ask the UserRegistrationHandler to register user", (done)->
-			@UserRegistrationHandler.registerNewUser.callsArgWith(1, null, @user)
-			@res.send = =>
-				@UserRegistrationHandler.registerNewUser.calledWith(@req.body).should.equal true
-				done()
+		beforeEach ->
+			@UserRegistrationHandler.registerNewUserAndSendActivationEmail = sinon.stub().callsArgWith(1, null, @user, @url = "mock/url")
+			@req.body.email = @user.email = @email = "email@example.com"
 			@UserController.register @req, @res
 
-		it "should try and log the user in if there is an EmailAlreadyRegisterd error", (done)->
+		it "should register the user and send them an email", ->
+			@UserRegistrationHandler.registerNewUserAndSendActivationEmail
+				.calledWith(@email)
+				.should.equal true
 
-			@UserRegistrationHandler.registerNewUser.callsArgWith(1, "EmailAlreadyRegisterd")
-			@AuthenticationController.login = (req, res)=>
-				assert.deepEqual req, @req
-				assert.deepEqual res, @res
+		it "should return the user and activation url", ->
+			@res.json
+				.calledWith({
+					email: @email,
+					setNewPasswordUrl: @url
+				})
+				.should.equal true
+
+	describe 'clearSessions', ->
+
+		it 'should call revokeAllUserSessions', (done) ->
+			@UserController.clearSessions @req, @res
+			@UserSessionsManager.revokeAllUserSessions.callCount.should.equal 1
+			done()
+
+		it 'send a 201 response', (done) ->
+			@res.sendStatus = (status) =>
+				status.should.equal 201
 				done()
-			@UserController.register @req, @res
+			@UserController.clearSessions @req, @res
 
-		it "should put the user on the session and mark them as justRegistered", (done)->
-			@UserRegistrationHandler.registerNewUser.callsArgWith(1, null, @user)
-			@res.send = =>
-				assert.deepEqual @user, @req.session.user
-				assert.equal @req.session.justRegistered, true
-				done()
-			@UserController.register @req, @res
+		describe 'when revokeAllUserSessions produces an error', ->
 
-		it "should redirect to project page", (done)->
-			@UserRegistrationHandler.registerNewUser.callsArgWith(1, null, @user)
-			@res.send = (opts)=>
-				opts.redir.should.equal "/project"
-				done()
-			@UserController.register @req, @res			
-
-
-		it "should redirect passed redir if it exists", (done)->
-			@UserRegistrationHandler.registerNewUser.callsArgWith(1, null, @user)
-			@req.body.redir = "/somewhere"
-			@res.send = (opts)=>
-				opts.redir.should.equal "/somewhere"
-				done()
-			@UserController.register @req, @res
-
-		it "should allocate the referals", (done)->
-			@req.session =
-				referal_id : "23123"
-				referal_source : "email"
-				referal_medium : "bob"
-				
-			@UserRegistrationHandler.registerNewUser.callsArgWith(1, null, @user)
-			@req.body.redir = "/somewhere"
-			@res.send = (opts)=>
-				@ReferalAllocator.allocate.calledWith(@req.session.referal_id, @user._id, @req.session.referal_source, @req.session.referal_medium).should.equal true
-				done()
-			@UserController.register @req, @res			
-			
-
+			it 'should call next with an error', (done) ->
+				@UserSessionsManager.revokeAllUserSessions.callsArgWith(2, new Error('woops'))
+				next = (err) =>
+					expect(err).to.not.equal null
+					expect(err).to.be.instanceof Error
+					done()
+				@UserController.clearSessions @req, @res, next
 
 	describe "changePassword", ->
 
@@ -227,7 +380,7 @@ describe "UserController", ->
 			@res.send = =>
 				@AuthenticationManager.setUserPassword.called.should.equal false
 				done()
-			@UserController.changePassword @req, @res			
+			@UserController.changePassword @req, @res
 
 		it "should set the new password if they do match", (done)->
 			@AuthenticationManager.authenticate.callsArgWith(2, null, @user)
@@ -239,5 +392,3 @@ describe "UserController", ->
 				@AuthenticationManager.setUserPassword.calledWith(@user._id, "newpass").should.equal true
 				done()
 			@UserController.changePassword @req, @res
-
-

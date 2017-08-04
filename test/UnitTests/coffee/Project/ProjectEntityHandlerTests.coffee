@@ -7,7 +7,7 @@ modulePath = "../../../../app/js/Features/Project/ProjectEntityHandler"
 SandboxedModule = require('sandboxed-module')
 ObjectId = require("mongoose").Types.ObjectId
 tk = require 'timekeeper'
-Errors = require "../../../../app/js/errors"
+Errors = require "../../../../app/js/Features/Errors/Errors"
 
 describe 'ProjectEntityHandler', ->
 	project_id = '4eecb1c1bffa66588e0000a1'
@@ -20,14 +20,15 @@ describe 'ProjectEntityHandler', ->
 			uploadFileFromDisk:(project_id, fileRef,  localImagePath, callback)->callback()
 			copyFile: sinon.stub().callsArgWith(4, null)
 		@tpdsUpdateSender =
-			addDoc:sinon.stub().callsArg(2)
-			addFile:sinon.stub().callsArg(2)
-			addFolder:sinon.stub().callsArg(2)
+			addDoc:sinon.stub().callsArg(1)
+			addFile:sinon.stub().callsArg(1)
+			addFolder:sinon.stub().callsArg(1)
 		@rootFolder = 
 			_id:rootFolderId, 
 			folders:[
 				{name:"level1", folders:[]}
 			]
+		@ProjectUpdateStub = sinon.stub()
 		@ProjectModel = class Project
 			constructor:(options)->
 				@._id = project_id
@@ -35,6 +36,7 @@ describe 'ProjectEntityHandler', ->
 				@rev = 0
 			save:(callback)->callback()
 			rootFolder:[@rootFolder]
+		@ProjectModel.update = @ProjectUpdateStub
 
 		@DocModel = class Doc
 			constructor:(options)->
@@ -55,8 +57,15 @@ describe 'ProjectEntityHandler', ->
 
 		@ProjectModel.findById = (project_id, callback)=> callback(null, @project)
 		@ProjectModel.getProject = (project_id, fields, callback)=> callback(null, @project)
-		@ProjectModel.putElement = (project_id, folder_id, doc, type, callback)-> callback(null, {path:{fileSystem:"somehintg"}})
+		@ProjectGetter = 
+			getProjectWithOnlyFolders : (project_id, callback)=> callback(null, @project)
+			getProjectWithoutDocLines : (project_id, callback)=> callback(null, @project)
+			getProject:sinon.stub()
 		@projectUpdater = markAsUpdated:sinon.stub()
+		@projectLocator = 
+			findElement : sinon.stub()
+		@settings =
+			maxEntitiesPerProject:200
 		@ProjectEntityHandler = SandboxedModule.require modulePath, requires:
 			'../../models/Project': Project:@ProjectModel
 			'../../models/Doc': Doc:@DocModel
@@ -64,12 +73,14 @@ describe 'ProjectEntityHandler', ->
 			'../../models/File': File:@FileModel
 			'../FileStore/FileStoreHandler':@FileStoreHandler
 			'../ThirdPartyDataStore/TpdsUpdateSender':@tpdsUpdateSender
-			'./ProjectLocator':@projectLocator = {}
+			'./ProjectLocator': @projectLocator
 			'../../Features/DocumentUpdater/DocumentUpdaterHandler':@documentUpdaterHandler = {}
 			'../Docstore/DocstoreManager': @DocstoreManager = {}
-			'logger-sharelatex': @logger = {log:sinon.stub(), error: sinon.stub()}
+			'logger-sharelatex': @logger = {log:sinon.stub(), error: sinon.stub(), err:->}
 			'./ProjectUpdateHandler': @projectUpdater
-			"./ProjectGetter": @ProjectGetter = {}
+			"./ProjectGetter": @ProjectGetter
+			"settings-sharelatex":@settings
+			"../Cooldown/CooldownManager": @CooldownManager = {}
 
 
 	describe 'mkdirp', ->
@@ -77,6 +88,7 @@ describe 'ProjectEntityHandler', ->
 			@parentFolder_id = "1jnjknjk"
 			@newFolder = {_id:"newFolder_id_here"}
 			@lastFolder = {_id:"123das", folders:[]}
+			@ProjectGetter.getProjectWithOnlyFolders = sinon.stub().callsArgWith(1, null, @project)
 			@projectLocator.findElementByPath = (project_id, path, cb)=>
 				@parentFolder = {_id:"parentFolder_id_here"}
 				lastFolder = path.substring(path.lastIndexOf("/"))
@@ -84,7 +96,7 @@ describe 'ProjectEntityHandler', ->
 					cb "level1 is not the last foler "
 				else
 					cb null, @parentFolder
-			@ProjectEntityHandler.addFolder = (project_id, parentFolder_id, folderName, sl_req_id, callback)=>
+			@ProjectEntityHandler.addFolder = (project_id, parentFolder_id, folderName, callback)=>
 				callback null, {name:folderName}, @parentFolder_id 
 		
 		it 'should return the root folder if the path is just a slash', (done)->
@@ -134,10 +146,11 @@ describe 'ProjectEntityHandler', ->
 				lastFolder.parentFolder_id.should.equal @parentFolder_id
 				done()
 
-	describe 'deleting an element', ->
+	describe 'deleteEntity', ->
 		entity_id = "4eecaffcbffa66588e000009"
 		beforeEach ->
-			@tpdsUpdateSender.deleteEntity = sinon.stub().callsArg(2)
+			@ProjectGetter.getProject.callsArgWith(2, null, @project)
+			@tpdsUpdateSender.deleteEntity = sinon.stub().callsArg(1)
 			@ProjectEntityHandler._removeElementFromMongoArray = sinon.stub().callsArg(3)
 			@ProjectEntityHandler._cleanUpEntity = sinon.stub().callsArg(3)
 			@path = mongo: "mongo.path", fileSystem: "/file/system/path"
@@ -186,7 +199,7 @@ describe 'ProjectEntityHandler', ->
 
 		describe "a doc", ->
 			beforeEach (done) ->
-				@ProjectEntityHandler._cleanUpDoc = sinon.stub().callsArg(3)
+				@ProjectEntityHandler._cleanUpDoc = sinon.stub().callsArg(2)
 				@ProjectEntityHandler._cleanUpEntity @project, @entity = {_id: @entity_id}, 'doc', done
 
 			it "should clean up the doc", ->
@@ -205,8 +218,8 @@ describe 'ProjectEntityHandler', ->
 					fileRefs: [ @file2 = { _id: "file-id-2" } ]
 					docs:     [ @doc2  = { _id: "doc-id-2" } ]
 
-				@ProjectEntityHandler._cleanUpDoc = sinon.stub().callsArg(3)
-				@ProjectEntityHandler._cleanUpFile = sinon.stub().callsArg(3)
+				@ProjectEntityHandler._cleanUpDoc = sinon.stub().callsArg(2)
+				@ProjectEntityHandler._cleanUpFile = sinon.stub().callsArg(2)
 				@ProjectEntityHandler._cleanUpEntity @project, @folder, "folder", done
 
 			it "should clean up all sub files", ->
@@ -217,52 +230,136 @@ describe 'ProjectEntityHandler', ->
 				@ProjectEntityHandler._cleanUpDoc.calledWith(@project, @doc1).should.equal true
 				@ProjectEntityHandler._cleanUpDoc.calledWith(@project, @doc2).should.equal true
 
-	describe 'moving an element', ->
+	describe 'moveEntity', ->
 		beforeEach ->
-			@docId = "4eecaffcbffa66588e000009"
-			@doc = {lines:["1234","312343d"], rev: "1234"}
+			@pathAfterMove = {
+				fileSystem: "/somewhere/else.txt"
+			}
+			@ProjectEntityHandler._removeElementFromMongoArray = sinon.stub().callsArg(3)
+			@ProjectEntityHandler._putElement = sinon.stub().callsArgWith(4, null, path: @pathAfterMove)
+			@ProjectGetter.getProject.callsArgWith(2, null, @project)
+			@tpdsUpdateSender.moveEntity = sinon.stub().callsArg(1)
+			
+		describe "moving a doc", ->
+			beforeEach (done) ->
+				@docId = "4eecaffcbffa66588e000009"
+				@doc = {lines:["1234","312343d"], rev: "1234"}
+				@path = {
+					mongo:"folders[0]"
+					fileSystem:"/somewhere.txt"
+				}
+				@projectLocator.findElement = sinon.stub().callsArgWith(1, null, @doc, @path)
+				@ProjectEntityHandler.moveEntity project_id, @docId, folder_id, "docs", done
 
-		it 'should find the project then element', (done)->
-			@projectLocator.findElement = (options, callback)=>
-				options.element_id.should.equal @docId
-				options.type.should.equal 'docs'
-				done()
-			@ProjectEntityHandler.moveEntity project_id, @docId, folder_id, "docs", ->
+			it 'should find the project then element', ->
+				@projectLocator.findElement.calledWith({element_id: @docId, type: "docs", project: @project }).should.equal true
 
-		it 'should remove the element then add it back in', (done)->
+			it 'should remove the element from its current position', ->
+				@ProjectEntityHandler._removeElementFromMongoArray
+					.calledWith(@ProjectModel, project_id, @path.mongo ).should.equal true
+					
+			it "should put the element back in the new folder", ->
+				@ProjectEntityHandler._putElement.calledWith(@project, folder_id, @doc, "docs").should.equal true
+					
+			it 'should tell the third party data store', ->
+				@tpdsUpdateSender.moveEntity
+					.calledWith({
+						project_id: project_id,
+						startPath: @path.fileSystem
+						endPath: @pathAfterMove.fileSystem
+						project_name: @project.name
+						rev: @doc.rev
+					})
+					.should.equal true
+					
+		describe "moving a folder", ->
+			beforeEach ->
+				@folder_id = "folder-to-move"
+				@move_to_folder_id = "folder-to-move-to"
+				@folder = { name: "folder" }
+				@folder_to_move_to = { name: "folder to move to" }
+				@path = {
+					mongo:      "folders[0]"
+					fileSystem: "/somewhere.txt"
+				}
+				@pathToMoveTo = {
+					mongo:      "folders[0]"
+					fileSystem: "/somewhere.txt"
+				}
+				@projectLocator.findElement = (options, callback) =>
+					if options.element_id == @folder_id
+						callback(null, @folder, @path)
+					else if options.element_id == @move_to_folder_id
+						callback(null, @folder_to_move_to, @pathToMoveTo)
+					else
+						console.log "UNKNOWN ID", options
+				sinon.spy @projectLocator, "findElement"
+						
+			describe "when the destination folder is outside the moving folder", ->
+				beforeEach (done) ->
+					@path.fileSystem = "/one/directory"
+					@pathToMoveTo.fileSystem = "/another/directory"
+					@ProjectEntityHandler.moveEntity project_id, @folder_id, @move_to_folder_id, "folder", done
 
-			path = {mongo:"folders[0]"}
-			@projectLocator.findElement = (opts, callback)=>
-				callback(null, @doc, path)
-			@ProjectEntityHandler._removeElementFromMongoArray = (model, model_id, path, callback)-> callback()
+				it 'should find the project then element', ->
+					@projectLocator.findElement
+						.calledWith({
+							element_id: @folder_id,
+							type: "folder",
+							project: @project
+						})
+						.should.equal true
 
-			@ProjectModel.putElement = (passedProject_id, destinationFolder_id, entity, entityType, callback)=>
-				passedProject_id.should.equal project_id
-				destinationFolder_id.should.equal folder_id
-				entity.should.deep.equal @doc
-				entityType.should.equal 'docs'
-				done()
-			@ProjectEntityHandler.moveEntity project_id, @docId, folder_id, "docs", ->
+				it 'should remove the element from its current position', ->
+					@ProjectEntityHandler._removeElementFromMongoArray
+						.calledWith(
+							@ProjectModel,
+							project_id,
+							@path.mongo
+						)
+						.should.equal true
+						
+				it "should put the element back in the new folder", ->
+					@ProjectEntityHandler._putElement
+						.calledWith(
+							@project,
+							@move_to_folder_id,
+							@folder,
+							"folder"
+						)
+						.should.equal true
+						
+				it 'should tell the third party data store', ->
+					@tpdsUpdateSender.moveEntity
+						.calledWith({
+							project_id: project_id,
+							startPath: @path.fileSystem
+							endPath: @pathAfterMove.fileSystem
+							project_name: @project.name,
+							rev: @folder.rev
+						})
+						.should.equal true
+						
+			describe "when the destination folder is inside the moving folder", ->
+				beforeEach ->
+					@path.fileSystem = "/one/two"
+					@pathToMoveTo.fileSystem = "/one/two/three"
+					@callback = sinon.stub()
+					@ProjectEntityHandler.moveEntity project_id, @folder_id, @move_to_folder_id, "folder", @callback
 
-		it 'should tell the third party data store', (done)->
-			startPath = {fileSystem:"/somewhere.txt"}
-			endPath = {fileSystem:"/somewhere.txt"}
-
-			@projectLocator.findElement = (opts, callback)=>
-				callback(null, @doc, startPath)
-			@ProjectEntityHandler._removeElementFromMongoArray = (model, model_id, path, callback)-> callback()
-			@ProjectModel.putElement = (passedProject_id, destinationFolder_id, entity, entityType, callback)->
-				callback null, path:endPath
-
-			@tpdsUpdateSender.moveEntity = (opts)=>
-				opts.project_id.should.equal project_id
-				opts.startPath.should.equal startPath.fileSystem
-				opts.endPath.should.equal endPath.fileSystem
-				opts.project_name.should.equal @project.name
-				opts.rev.should.equal @doc.rev
-				done()
-			@ProjectEntityHandler.moveEntity project_id, @docId, folder_id, "docs", ->
-
+				it 'should find the folder we are moving to as well element', ->
+					@projectLocator.findElement
+						.calledWith({
+							element_id: @move_to_folder_id,
+							type: "folder",
+							project: @project
+						})
+						.should.equal true
+						
+				it "should return an error", ->
+					@callback
+						.calledWith(new Error("destination folder is a child folder of me"))
+						.should.equal true
 
 	describe 'removing element from mongo array', ->
 		it 'should call update with log the path', (done)->
@@ -286,7 +383,9 @@ describe 'ProjectEntityHandler', ->
 		beforeEach ->
 			@lines = ["mock", "doc", "lines"]
 			@rev = 5
-			@DocstoreManager.getDoc = sinon.stub().callsArgWith(3, null, @lines, @rev)
+			@version = 42
+			@ranges = {"mock": "ranges"}
+			@DocstoreManager.getDoc = sinon.stub().callsArgWith(3, null, @lines, @rev, @version, @ranges)
 			@ProjectEntityHandler.getDoc project_id, doc_id, @callback
 
 		it "should call the docstore", ->
@@ -295,7 +394,7 @@ describe 'ProjectEntityHandler', ->
 				.should.equal true
 
 		it "should call the callback with the lines, version and rev", ->
-			@callback.calledWith(null, @lines, @rev).should.equal true
+			@callback.calledWith(null, @lines, @rev, @version, @ranges).should.equal true
 
 	describe 'addDoc', ->
 		beforeEach ->
@@ -303,22 +402,20 @@ describe 'ProjectEntityHandler', ->
 			@lines = ['1234','abc']
 			@path = "/path/to/doc"
 
-			@ProjectModel.putElement = sinon.stub().callsArgWith(4, null, {path:{fileSystem:@path}})
+			@ProjectEntityHandler._putElement = sinon.stub().callsArgWith(4, null, {path:{fileSystem:@path}})
 			@callback = sinon.stub()
-			@tpdsUpdateSender.addDoc = sinon.stub().callsArg(2)
-			@DocstoreManager.updateDoc = sinon.stub().callsArgWith(3, null, true, 0)
+			@tpdsUpdateSender.addDoc = sinon.stub().callsArg(1)
+			@DocstoreManager.updateDoc = sinon.stub().yields(null, true, 0)
 
 			@ProjectEntityHandler.addDoc project_id, folder_id, @name, @lines, @callback
 
 			# Created doc
-			@doc = @ProjectModel.putElement.args[0][2]
+			@doc = @ProjectEntityHandler._putElement.args[0][2]
 			@doc.name.should.equal @name
 			expect(@doc.lines).to.be.undefined
 
 		it 'should call put element', ->
-			@ProjectModel.putElement
-				.calledWith(project_id, folder_id, @doc)
-				.should.equal true
+			@ProjectEntityHandler._putElement.calledWith(@project, folder_id, @doc).should.equal true
 
 		it 'should return doc and parent folder', ->
 			@callback.calledWith(null, @doc, folder_id).should.equal true
@@ -364,7 +461,7 @@ describe 'ProjectEntityHandler', ->
 		it "should call the callback with the new folder and doc", ->
 			@callback.calledWith(null, @doc, @folder_id).should.equal true
 
-	describe 'adding file', ->
+	describe 'addFile', ->
 		fileName = "something.jpg"
 		beforeEach ->
 			@filePath = "somewhere"
@@ -378,8 +475,8 @@ describe 'ProjectEntityHandler', ->
 			@ProjectEntityHandler.addFile project_id, folder_id, fileName, @filePath, (err, fileRef, parentFolder)->
 
 		it 'should put file into folder by calling put element', (done)->
-			@ProjectModel.putElement = (passedProject_id, passedFolder_id, passedFileRef, passedType, callback)->
-				passedProject_id.should.equal project_id
+			@ProjectEntityHandler._putElement = (passedProject, passedFolder_id, passedFileRef, passedType, callback)->
+				passedProject._id.should.equal project_id
 				passedFolder_id.should.equal folder_id
 				passedFileRef.name.should.equal fileName
 				passedType.should.equal 'file'
@@ -388,6 +485,7 @@ describe 'ProjectEntityHandler', ->
 			@ProjectEntityHandler.addFile project_id, folder_id, fileName, {}, (err, fileRef, parentFolder)->
 
 		it 'should return doc and parent folder', (done)->
+			@ProjectEntityHandler._putElement = sinon.stub().callsArgWith(4, null, {path:{fileSystem:"somehintg"}})
 			@ProjectEntityHandler.addFile project_id, folder_id, fileName, {}, (err, fileRef, parentFolder)->
 				parentFolder.should.equal folder_id
 				fileRef.name.should.equal fileName
@@ -398,7 +496,7 @@ describe 'ProjectEntityHandler', ->
 			opts =
 				path : "/somehwere/idsadsds"
 				project_id : project_id
-			@ProjectModel.putElement = (project_id, folder_id, doc, type, callback)-> callback(null, {path:{fileSystem:opts.path}})
+			@ProjectEntityHandler._putElement = (project_id, folder_id, doc, type, callback)-> callback(null, {path:{fileSystem:opts.path}})
 
 			@tpdsUpdateSender.addFile = (options)=>
 				options.project_id.should.equal project_id
@@ -420,6 +518,7 @@ describe 'ProjectEntityHandler', ->
 			@filePaths = {fileSystem:"/folder1/file.png", mongo:"folder.1.files.somewhere"}
 			@projectLocator.findElement = sinon.stub().callsArgWith(1, null, @fileRef, @filePaths)
 			@ProjectModel.update = (_, __, ___, cb)-> cb()
+			@ProjectGetter.getProject = sinon.stub().callsArgWith(2, null, @project)
 
 		it 'should find the file', (done)->
 
@@ -458,18 +557,20 @@ describe 'ProjectEntityHandler', ->
 			@ProjectModel.update = (conditions, update, options, callback)=>
 				conditions._id.should.equal project_id
 				differenceInMs = update.$set["#{@filePaths.mongo}.created"].getTime() - d.getTime()
-				differenceInMs.should.be.below(10)
+				differenceInMs.should.be.below(20)
 				done()
 
 			@ProjectEntityHandler.replaceFile project_id, @file_id, @fsPath, =>
 
 
-	describe 'adding a folder', ->
+	describe 'addFolder', ->
 		folderName = "folder1234"
+		beforeEach ->
+			@ProjectGetter.getProjectWithOnlyFolders = sinon.stub().callsArgWith(1, null, @project)
 
 		it 'should call put element', (done)->
-			@ProjectModel.putElement = (passedProject_id, passedFolder_id, passedFolder, passedType, callback)->
-				passedProject_id.should.equal project_id
+			@ProjectEntityHandler._putElement = (passedProject, passedFolder_id, passedFolder, passedType, callback)->
+				passedProject._id.should.equal project_id
 				passedFolder_id.should.equal folder_id
 				passedFolder.name.should.equal folderName
 				passedType.should.equal 'folder'
@@ -477,6 +578,7 @@ describe 'ProjectEntityHandler', ->
 			@ProjectEntityHandler.addFolder project_id, folder_id, folderName, (err, folder, parentFolder)->
 
 		it 'should return the folder and parent folder', (done)->
+			@ProjectEntityHandler._putElement = sinon.stub().callsArgWith(4)
 			@ProjectEntityHandler.addFolder project_id, folder_id, folderName, (err, folder, parentFolder)->
 				parentFolder.should.equal folder_id
 				folder.name.should.equal folderName
@@ -490,6 +592,8 @@ describe 'ProjectEntityHandler', ->
 			@doc = {
 				_id: doc_id
 			}
+			@version = 42
+			@ranges = {"mock":"ranges"}
 			@ProjectGetter.getProjectWithoutDocLines = sinon.stub().callsArgWith(1, null, @project)
 			@projectLocator.findElement = sinon.stub().callsArgWith(1, null, @doc, {fileSystem: @path})
 			@tpdsUpdateSender.addDoc = sinon.stub().callsArg(1)
@@ -498,8 +602,8 @@ describe 'ProjectEntityHandler', ->
 
 		describe "when the doc has been modified", ->
 			beforeEach ->
-				@DocstoreManager.updateDoc = sinon.stub().callsArgWith(3, null, true, @rev = 5)
-				@ProjectEntityHandler.updateDocLines project_id, doc_id, @lines, @callback
+				@DocstoreManager.updateDoc = sinon.stub().yields(null, true, @rev = 5)
+				@ProjectEntityHandler.updateDocLines project_id, doc_id, @lines, @version, @ranges, @callback
 
 			it "should get the project without doc lines", ->
 				@ProjectGetter.getProjectWithoutDocLines
@@ -517,7 +621,7 @@ describe 'ProjectEntityHandler', ->
 
 			it "should update the doc in the docstore", ->
 				@DocstoreManager.updateDoc
-					.calledWith(project_id, doc_id, @lines)
+					.calledWith(project_id, doc_id, @lines, @version, @ranges)
 					.should.equal true
 
 			it "should mark the project as updated", ->
@@ -541,8 +645,8 @@ describe 'ProjectEntityHandler', ->
 
 		describe "when the doc has not been modified", ->
 			beforeEach ->
-				@DocstoreManager.updateDoc = sinon.stub().callsArgWith(3, null, false, @rev = 5)
-				@ProjectEntityHandler.updateDocLines project_id, doc_id, @lines, @callback
+				@DocstoreManager.updateDoc = sinon.stub().yields(null, false, @rev = 5)
+				@ProjectEntityHandler.updateDocLines project_id, doc_id, @lines, @version, @ranges, @callback
 
 			it "should not mark the project as updated", ->
 				@projectUpdater.markAsUpdated.called.should.equal false
@@ -556,7 +660,7 @@ describe 'ProjectEntityHandler', ->
 		describe "when the project is not found", ->
 			beforeEach ->
 				@ProjectGetter.getProjectWithoutDocLines = sinon.stub().callsArgWith(1, null, null)
-				@ProjectEntityHandler.updateDocLines project_id, doc_id, @lines, @callback
+				@ProjectEntityHandler.updateDocLines project_id, doc_id, @lines, @ranges, @version, @callback
 
 			it "should return a not found error", ->
 				@callback.calledWith(new Errors.NotFoundError()).should.equal true
@@ -564,7 +668,7 @@ describe 'ProjectEntityHandler', ->
 		describe "when the doc is not found", ->
 			beforeEach ->
 				@projectLocator.findElement = sinon.stub().callsArgWith(1, null, null, null)
-				@ProjectEntityHandler.updateDocLines project_id, doc_id, @lines, @callback
+				@ProjectEntityHandler.updateDocLines project_id, doc_id, @lines, @ranges, @version, @callback
 
 			it "should log out the error", ->
 				@logger.error
@@ -684,9 +788,9 @@ describe 'ProjectEntityHandler', ->
 				name: "Mock project name"
 			}
 			@ProjectModel.findById = sinon.stub().callsArgWith(1, null, @project)
-			@documentUpdaterHandler.flushProjectToMongo = sinon.stub().callsArg(2)
-			@tpdsUpdateSender.addDoc = sinon.stub().callsArg(2)
-			@tpdsUpdateSender.addFile = sinon.stub().callsArg(2)
+			@documentUpdaterHandler.flushProjectToMongo = sinon.stub().callsArg(1)
+			@tpdsUpdateSender.addDoc = sinon.stub().callsArg(1)
+			@tpdsUpdateSender.addFile = sinon.stub().callsArg(1)
 			@docs = {
 				"/doc/one": @doc1 = { _id: "mock-doc-1", lines: ["one"], rev: 5 }
 				"/doc/two": @doc2 = { _id: "mock-doc-2", lines: ["two"], rev: 6 }
@@ -698,27 +802,21 @@ describe 'ProjectEntityHandler', ->
 			@ProjectEntityHandler.getAllDocs = sinon.stub().callsArgWith(1, null, @docs)
 			@ProjectEntityHandler.getAllFiles = sinon.stub().callsArgWith(1, null, @files)
 
+			@ProjectGetter.getProject.callsArgWith(2, null, @project)
+
 			@ProjectEntityHandler.flushProjectToThirdPartyDataStore project_id, () -> done()
 
 		it "should flush the project from the doc updater", ->
-			@documentUpdaterHandler.flushProjectToMongo
-				.calledWith(project_id)
-				.should.equal true
+			@documentUpdaterHandler.flushProjectToMongo.calledWith(project_id).should.equal true
 
 		it "should look up the project in mongo", ->
-			@ProjectModel.findById
-				.calledWith(project_id)
-				.should.equal true
+			@ProjectGetter.getProject.calledWith(project_id).should.equal true
 
 		it "should get all the docs in the project", ->
-			@ProjectEntityHandler.getAllDocs
-				.calledWith(project_id)
-				.should.equal true
+			@ProjectEntityHandler.getAllDocs.calledWith(project_id).should.equal true
 
 		it "should get all the files in the project", ->
-			@ProjectEntityHandler.getAllFiles
-				.calledWith(project_id)
-				.should.equal true
+			@ProjectEntityHandler.getAllFiles.calledWith(project_id).should.equal true
 
 		it "should flush each doc to the TPDS", ->
 			for path, doc of @docs
@@ -762,20 +860,25 @@ describe 'ProjectEntityHandler', ->
 			@ProjectModel.update.calledWith({_id : @project_id}, {$unset : {rootDoc_id: true}})
 				.should.equal true
 
-	describe 'copying file', ->
+	describe 'copyFileFromExistingProject', ->
 		fileName = "something.jpg"
 		filePath = "dumpFolder/somewhere/image.jpeg"
 		oldProject_id = "123kljadas"
 		oldFileRef = {name:fileName, _id:"oldFileRef"}
+		beforeEach ->
+			@ProjectGetter.getProject = (project_id, fields, callback)=> callback(null, {name:@project.name, _id:@project._id})
+			@ProjectEntityHandler._putElement = sinon.stub().callsArgWith(4, null, {path:{fileSystem:"somehintg"}})
+
 
 		it 'should copy the file in FileStoreHandler', (done)->
+			@ProjectEntityHandler._putElement = sinon.stub().callsArgWith(4, null, {path:{fileSystem:"somehintg"}})
 			@ProjectEntityHandler.copyFileFromExistingProject project_id, folder_id, oldProject_id, oldFileRef, (err, fileRef, parentFolder)=>     
 				@FileStoreHandler.copyFile.calledWith(oldProject_id, oldFileRef._id, project_id, fileRef._id).should.equal true
 				done()
 
 		it 'should put file into folder by calling put element', (done)->
-			@ProjectModel.putElement = (passedProject_id, passedFolder_id, passedFileRef, passedType, callback)-> 
-				passedProject_id.should.equal project_id
+			@ProjectEntityHandler._putElement = (passedProject, passedFolder_id, passedFileRef, passedType, callback)-> 
+				passedProject._id.should.equal project_id
 				passedFolder_id.should.equal folder_id
 				passedFileRef.name.should.equal fileName
 				passedType.should.equal 'file'
@@ -794,7 +897,7 @@ describe 'ProjectEntityHandler', ->
 			opts =
 				path : "/somehwere/idsadsds"
 				project_id : project_id
-			@ProjectModel.putElement = (project_id, folder_id, doc, type, callback)-> callback(null, {path:{fileSystem:opts.path}})
+			@ProjectEntityHandler._putElement = (project_id, folder_id, doc, type, callback)-> callback(null, {path:{fileSystem:opts.path}})
 
 			@tpdsUpdateSender.addFile = (options)=>
 				options.project_id.should.equal project_id
@@ -816,6 +919,7 @@ describe 'ProjectEntityHandler', ->
 			@projectLocator.findElement = sinon.stub().callsArgWith(1, null, @entity = { _id: @entity_id, name:"old.tex", rev:4 }, @path)
 			@ProjectModel.update = sinon.stub().callsArgWith(3)
 			@tpdsUpdateSender.moveEntity = sinon.stub()
+			@ProjectGetter.getProject.callsArgWith(2, null, @project)
 
 		it "should update the name in mongo", (done)->
 
@@ -904,3 +1008,120 @@ describe 'ProjectEntityHandler', ->
 
 			it "should call the callback", ->
 				@callback.called.should.equal true
+
+
+	describe "_putElement", ->
+		beforeEach ->
+			@project_id = project_id
+			@project =
+				_id: ObjectId(project_id)
+				rootFolder: [_id:ObjectId()]
+			@folder =
+				_id: ObjectId()
+				name: "someFolder"
+			@doc = 
+				_id: ObjectId()
+				name: "new.tex"
+			@path = mongo: "mongo.path", fileSystem: "/file/system/old.tex"
+			@ProjectGetter.getProject.callsArgWith(2, null, @project)
+			@projectLocator.findElement.callsArgWith(1, null, @folder, @path)
+			@ProjectUpdateStub.callsArgWith(3)
+
+
+		describe "updating the project", ->
+			
+
+			it "should use the correct mongo path", (done)->
+				@ProjectEntityHandler._putElement @project, @folder._id, @doc, "docs", (err)=>
+					@ProjectModel.update.args[0][0]._id.should.equal @project._id
+					assert.deepEqual @ProjectModel.update.args[0][1].$push[@path.mongo+".docs"], @doc
+					done()
+
+			it "should add an s onto the type if not included", (done)->
+				@ProjectEntityHandler._putElement @project, @folder._id, @doc, "doc", (err)=>
+					assert.deepEqual @ProjectModel.update.args[0][1].$push[@path.mongo+".docs"], @doc
+					done()
+
+
+			it "should not call update if elemenet is null", (done)->
+				@ProjectEntityHandler._putElement @project, @folder._id, null, "doc", (err)=>
+					@ProjectModel.update.called.should.equal false
+					done()
+
+			it "should default to root folder insert", (done)->
+				@ProjectEntityHandler._putElement @project, null, @doc, "doc", (err)=>
+					@projectLocator.findElement.args[0][0].element_id.should.equal @project.rootFolder[0]._id
+					done()
+
+			it "should error if the element has no _id", (done)->
+				doc = 
+					name:"something"
+				@ProjectEntityHandler._putElement @project, @folder._id, doc, "doc", (err)=>
+					@ProjectModel.update.called.should.equal false
+					done()
+			
+
+
+		describe "_countElements", ->
+
+			beforeEach ->
+				@project.rootFolder[0].docs = [{_id:123}, {_id:345}]
+				@project.rootFolder[0].fileRefs = [{_id:123}, {_id:345}, {_id:456}]
+				@project.rootFolder[0].folders = [
+					{
+						docs:
+							[{_id:123}, {_id:345}, {_id:456}]
+						fileRefs:{}
+						folders: [
+							{
+								docs:[_id:1234], 
+								fileRefs:[{_id:23123}, {_id:123213}, {_id:2312}]
+								folders:[
+									{
+										docs:[{_id:321321}, {_id:123213}]
+										fileRefs:[{_id:312321}]
+										folders:[]
+									}
+								]
+							}
+						]
+					},{
+						docs:[{_id:123}, {_id:32131}]
+						fileRefs:[]
+						folders:[
+							{
+								docs:[{_id:3123}]
+								fileRefs:[{_id:321321}, {_id:321321}, {_id:313122}]
+								folders:0
+							}
+						]
+					}
+				]				
+
+			it "should return the correct number", (done)->
+				@ProjectEntityHandler._countElements @project, (err, count)->
+					count.should.equal 26
+					done()
+
+			it "should deal with null folders", (done)->
+				@project.rootFolder[0].folders[0].folders = undefined
+				@ProjectEntityHandler._countElements @project, (err, count)->
+					count.should.equal 17
+					done()				
+
+			it "should deal with null docs", (done)->
+				@project.rootFolder[0].folders[0].docs = undefined
+				@ProjectEntityHandler._countElements @project, (err, count)->
+					count.should.equal 23
+					done()				
+
+			it "should deal with null fileRefs", (done)->
+				@project.rootFolder[0].folders[0].folders[0].fileRefs = undefined
+				@ProjectEntityHandler._countElements @project, (err, count)->
+					count.should.equal 23
+					done()	
+
+
+
+
+

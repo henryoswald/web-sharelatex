@@ -6,24 +6,47 @@ settings = require("settings-sharelatex")
 oneMinInMs = 60 * 1000
 fiveMinsInMs = oneMinInMs * 5
 
-module.exports =
+module.exports = FileStoreHandler =
 
 	uploadFileFromDisk: (project_id, file_id, fsPath, callback)->
-		logger.log project_id:project_id, file_id:file_id, fsPath:fsPath, "uploading file from disk"
-		readStream = fs.createReadStream(fsPath)
-		opts =
-			method: "post"
-			uri: @_buildUrl(project_id, file_id)
-			timeout:fiveMinsInMs
-		writeStream = request(opts)
-		readStream.pipe writeStream
-		writeStream.on "end", callback
-		readStream.on "error", (err)->
-			logger.err err:err, project_id:project_id, file_id:file_id, fsPath:fsPath, "something went wrong on the read stream of uploadFileFromDisk"
-			callback err
-		writeStream.on "error", (err)->
-			logger.err err:err, project_id:project_id, file_id:file_id, fsPath:fsPath, "something went wrong on the write stream of uploadFileFromDisk"
-			callback err
+		fs.lstat fsPath, (err, stat)->
+			if err?
+				logger.err err:err, project_id:project_id, file_id:file_id, fsPath:fsPath, "error stating file"
+				callback(err)
+			if !stat?
+				logger.err project_id:project_id, file_id:file_id, fsPath:fsPath, "stat is not available, can not check file from disk"
+				return callback(new Error("error getting stat, not available"))
+			if !stat.isFile()
+				logger.log project_id:project_id, file_id:file_id, fsPath:fsPath, "tried to upload symlink, not contining"
+				return callback(new Error("can not upload symlink"))
+
+			_cb = callback
+			callback = (err) ->
+				callback = ->	# avoid double callbacks
+				_cb(err)
+
+			logger.log project_id:project_id, file_id:file_id, fsPath:fsPath, "uploading file from disk"
+			readStream = fs.createReadStream(fsPath)
+			readStream.on "error", (err)->
+				logger.err err:err, project_id:project_id, file_id:file_id, fsPath:fsPath, "something went wrong on the read stream of uploadFileFromDisk"
+				callback err
+			readStream.on "open", () ->
+				opts =
+					method: "post"
+					uri: FileStoreHandler._buildUrl(project_id, file_id)
+					timeout:fiveMinsInMs
+				writeStream = request(opts)
+				writeStream.on "error", (err)->
+					logger.err err:err, project_id:project_id, file_id:file_id, fsPath:fsPath, "something went wrong on the write stream of uploadFileFromDisk"
+					callback err
+				writeStream.on 'response', (response) ->
+					if response.statusCode not in [200, 201]
+						err = new Error("non-ok response from filestore for upload: #{response.statusCode}")
+						logger.err {err, statusCode: response.statusCode}, "error uploading to filestore"
+						callback(err)
+					else
+						callback(null)
+				readStream.pipe writeStream
 
 	getFileStream: (project_id, file_id, query, callback)->
 		logger.log project_id:project_id, file_id:file_id, query:query, "getting file stream from file store"
@@ -34,7 +57,14 @@ module.exports =
 			method : "get"
 			uri: "#{@_buildUrl(project_id, file_id)}#{queryString}"
 			timeout:fiveMinsInMs
+			headers: {}
+		if query? and query['range']?
+			rangeText = query['range']
+			if rangeText && rangeText.match? && rangeText.match(/\d+-\d+/)
+				opts.headers['range'] = "bytes=#{query['range']}"
 		readStream = request(opts)
+		readStream.on "error", (err) ->
+			logger.err {err, project_id, file_id, query}, "error in file stream"
 		callback(null, readStream)
 
 	deleteFile: (project_id, file_id, callback)->

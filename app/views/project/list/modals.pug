@@ -1,0 +1,292 @@
+script(type='text/ng-template', id='newTagModalTemplate')
+	.modal-header
+		button.close(
+			type="button"
+			data-dismiss="modal"
+			ng-click="cancel()"
+		) &times;
+		h3 #{translate("create_new_folder")}
+	.modal-body
+		form(name="newTagForm", novalidate)
+			input.form-control(
+				type="text",
+				placeholder="New Folder Name",
+				required,
+				ng-model="inputs.newTagName",
+				on-enter="create()",
+				focus-on="open",
+				stop-propagation="click"
+			)
+	.modal-footer
+		.modal-footer-left
+			span.text-danger.error(ng-show="state.error") #{translate("generic_something_went_wrong")}
+		//- We stop propagation to stop the clicks from closing the
+		//- 'move to folder' menu.
+		button.btn.btn-default(
+			ng-click="cancel()"
+			stop-propagation="click"
+		) #{translate("cancel")}
+		button.btn.btn-primary(
+			ng-disabled="newTagForm.$invalid || state.inflight"
+			ng-click="create()"
+			stop-propagation="click"
+		)
+			span(ng-show="!state.inflight") #{translate("create")}
+			span(ng-show="state.inflight") #{translate("creating")}...
+
+script(type='text/ng-template', id='deleteTagModalTemplate')
+	.modal-header
+		button.close(
+			type="button"
+			data-dismiss="modal"
+			ng-click="cancel()"
+		) &times;
+		h3 #{translate("delete_folder")}
+	.modal-body
+		p #{translate("about_to_delete_folder")}
+		ul
+			li
+				strong {{tag.name}}
+	.modal-footer
+		.modal-footer-left
+			span.text-danger.error(ng-show="state.error") #{translate("generic_something_went_wrong")}
+		button.btn.btn-default(
+			ng-click="cancel()"
+		) #{translate("cancel")}
+		button.btn.btn-danger(
+			ng-click="delete()",
+			ng-disabled="state.inflight"
+		)
+			span(ng-show="state.inflight") #{translate("deleting")}...
+			span(ng-show="!state.inflight") #{translate("delete")}
+
+script(type='text/ng-template', id='renameTagModalTemplate')
+	.modal-header
+		button.close(
+			type="button"
+			data-dismiss="modal"
+			ng-click="cancel()"
+		) &times;
+		h3 #{translate("rename_folder")}
+	.modal-body
+		form(name="renameTagForm", novalidate)
+			input.form-control(
+				type="text",
+				placeholder="Tag Name",
+				ng-model="inputs.tagName",
+				required,
+				on-enter="rename()",
+				focus-on="open"
+			)
+	.modal-footer
+		.modal-footer-left
+			span.text-danger.error(ng-show="state.error") #{translate("generic_something_went_wrong")}
+		button.btn.btn-default(ng-click="cancel()") #{translate("cancel")}
+		button.btn.btn-primary(
+			ng-click="rename()",
+			ng-disabled="renameTagForm.$invalid || state.inflight"
+		)
+			span(ng-show="!state.inflight") #{translate("rename")}
+			span(ng-show="state.inflight") #{translate("renaming")}...
+
+script(type='text/ng-template', id='renameProjectModalTemplate')
+	.modal-header
+		button.close(
+			type="button"
+			data-dismiss="modal"
+			ng-click="cancel()"
+		) &times;
+		h3 #{translate("rename_project")}
+	.modal-body
+		.alert.alert-danger(ng-show="state.error.message") {{ state.error.message}} 
+		.alert.alert-danger(ng-show="state.error && !state.error.message") #{translate("generic_something_went_wrong")}
+		form(name="renameProjectForm", novalidate)
+			input.form-control(
+				type="text",
+				placeholder="Project Name",
+				ng-model="inputs.projectName",
+				required,
+				on-enter="rename()",
+				focus-on="open"
+			)
+	.modal-footer
+		button.btn.btn-default(ng-click="cancel()") #{translate("cancel")}
+		button.btn.btn-primary(
+			ng-click="rename()",
+			ng-disabled="renameProjectForm.$invalid || state.inflight"
+		)
+			span(ng-show="!state.inflight") #{translate("rename")}
+			span(ng-show="state.inflight") #{translate("renaming")}...
+
+script(type='text/ng-template', id='cloneProjectModalTemplate')
+	.modal-header
+		button.close(
+			type="button"
+			data-dismiss="modal"
+			ng-click="cancel()"
+		) &times;
+		h3 #{translate("copy_project")}
+	.modal-body
+		.alert.alert-danger(ng-show="state.error.message") {{ state.error.message}} 
+		.alert.alert-danger(ng-show="state.error && !state.error.message") #{translate("generic_something_went_wrong")}
+		form(name="cloneProjectForm", novalidate)
+			.form-group
+				label #{translate("new_name")}
+				input.form-control(
+					type="text",
+					placeholder="New Project Name",
+					required,
+					ng-model="inputs.projectName",
+					on-enter="clone()",
+					focus-on="open"
+				)
+	.modal-footer
+		button.btn.btn-default(
+			ng-disabled="state.inflight"
+			ng-click="cancel()"
+		) #{translate("cancel")}
+		button.btn.btn-primary(
+			ng-disabled="cloneProjectForm.$invalid || state.inflight"
+			ng-click="clone()"
+		)
+			span(ng-hide="state.inflight") #{translate("copy")}
+			span(ng-show="state.inflight") #{translate("copying")} ...
+
+script(type='text/ng-template', id='newProjectModalTemplate')
+	.modal-header
+		button.close(
+			type="button"
+			data-dismiss="modal"
+			ng-click="cancel()"
+		) &times;
+		h3 #{translate("new_project")}
+	.modal-body
+		.alert.alert-danger(ng-show="state.error.message") {{ state.error.message}} 
+		.alert.alert-danger(ng-show="state.error && !state.error.message") #{translate("generic_something_went_wrong")}
+		form(novalidate, name="newProjectForm")
+			input.form-control(
+				type="text",
+				placeholder="Project Name",
+				required,
+				ng-model="inputs.projectName",
+				on-enter="create()",
+				focus-on="open"
+			)
+	.modal-footer
+		button.btn.btn-default(
+			ng-disabled="state.inflight"
+			ng-click="cancel()"
+		) #{translate("cancel")}
+		button.btn.btn-primary(
+			ng-disabled="newProjectForm.$invalid || state.inflight"
+			ng-click="create()"
+		)
+			span(ng-hide="state.inflight") #{translate("create")}
+			span(ng-show="state.inflight") #{translate("creating")} ...
+
+script(type='text/ng-template', id='deleteProjectsModalTemplate')
+	.modal-header
+		button.close(
+			type="button"
+			data-dismiss="modal"
+			ng-click="cancel()"
+		) &times;
+		h3(ng-if="action == 'delete'") #{translate("delete_projects")}
+		h3(ng-if="action == 'leave'") #{translate("leave_projects")}
+		h3(ng-if="action == 'delete-and-leave'") #{translate("delete_and_leave_projects")}
+	.modal-body
+		div(ng-show="projectsToDelete.length > 0")
+			p #{translate("about_to_delete_projects")}
+			ul
+				li(ng-repeat="project in projectsToDelete | orderBy:'name'")
+					strong {{project.name}}
+		div(ng-show="projectsToLeave.length > 0")
+			p #{translate("about_to_leave_projects")}
+			ul
+				li(ng-repeat="project in projectsToLeave | orderBy:'name'")
+					strong {{project.name}}
+	.modal-footer
+		button.btn.btn-default(
+			ng-click="cancel()"
+		) #{translate("cancel")}
+		button.btn.btn-danger(
+			ng-click="delete()"
+		) #{translate("confirm")}
+
+script(type="text/ng-template", id="uploadProjectModalTemplate")
+	.modal-header
+		button.close(
+			type="button"
+			data-dismiss="modal"
+			ng-click="cancel()"
+		) &times;
+		h3 #{translate("upload_zipped_project")}
+	.modal-body(
+		fine-upload
+		endpoint="/project/new/upload"
+		waiting-for-response-text="Creating project..."
+		failed-upload-text="Upload failed. Is it a valid zip file?"
+		upload-button-text="Select a .zip file"
+		drag-area-text="drag .zip file"
+		multiple="false"
+		allowed-extensions="['zip']"
+		on-complete-callback="onComplete"
+	)
+		span #{translate("upload_a_zipped_project")}
+	.modal-footer
+		button.btn.btn-default(ng-click="cancel()") #{translate("cancel")}
+
+script(type="text/ng-template", id="userProfileModalTemplate")
+	.modal-header
+		button.close(
+			type="button"
+			data-dismiss="modal"
+			ng-click="done()"
+		) &times;
+		h3 #{translate("your_profile")}
+	.modal-body
+		form(enctype='multipart/form-data', method='post')
+
+			.form-group
+				label(for="first_name") #{translate("first_name")}
+				input.form-control(
+					type='text',
+					name='first_name',
+					ng-model="userInfoForm.first_name",
+					placeholder="First Name",
+					select-when="formVisable"
+				)
+
+			.form-group
+				label(for="last_name") #{translate("last_name")}
+				input.form-control(
+					type='text',
+					name='last_name',
+					ng-model="userInfoForm.last_name",
+					placeholder='Last Name'
+				)
+
+			.form-group.user_details_auto_complete
+				label(for="institution") #{translate("institution")}
+				autocomplete(
+					ng-model="userInfoForm.institution",
+					name="institution",
+					data="institutions",
+					on-type="updateInstitutionsList",
+					attr-placeholder="Institution",
+					attr-inputclass="form-control"
+				)
+
+			.form-group.user_details_auto_complete
+				label(for="role") #{translate("role")}
+				autocomplete(
+					ng-model="userInfoForm.role",
+					name="role",
+					data="roles",
+					attr-placeholder="Role",
+					attr-inputclass="form-control"
+				)
+
+
+	.modal-footer
+		button.btn.btn-info(ng-click="done()") #{translate("done")}

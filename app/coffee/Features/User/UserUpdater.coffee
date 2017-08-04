@@ -1,5 +1,6 @@
 logger = require("logger-sharelatex")
 mongojs = require("../../infrastructure/mongojs")
+metrics = require("metrics-sharelatex")
 db = mongojs.db
 ObjectId = mongojs.ObjectId
 UserLocator = require("./UserLocator")
@@ -19,7 +20,7 @@ module.exports = UserUpdater =
 		logger.log user_id:user_id, newEmail:newEmail, "updaing email address of user"
 		UserLocator.findByEmail newEmail, (error, user) ->
 			if user?
-				return callback({message:"User with that email already exists."})
+				return callback({message:"alread_exists"})
 			self.updateUser user_id.toString(), {
 				$set: { "email": newEmail},
 			}, (err) ->
@@ -29,13 +30,4 @@ module.exports = UserUpdater =
 				callback()
 
 
-	updatePersonalInfo: (user_id, info, callback)->
-		self = @
-		update = 
-			$set: 
-				"first_name": info.first_name || ""
-				"last_name":  info.last_name || ""
-				"role":		  info.role || ""
-				"institution": info.institution || ""
-		self.updateUser user_id.toString(), update, (err)->
-			callback(err)
+metrics.timeAsyncMethod UserUpdater, 'updateUser', 'mongo.UserUpdater', logger

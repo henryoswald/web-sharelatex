@@ -1,13 +1,42 @@
 Mocha = require "mocha"
 Base = require("mocha/lib/reporters/base")
+RedisWrapper = require("../../infrastructure/RedisWrapper")
+rclient = RedisWrapper.client("health_check")
+settings = require("settings-sharelatex")
+logger = require "logger-sharelatex"
+domain = require "domain"
 
 module.exports = HealthCheckController =
 	check: (req, res, next = (error) ->) ->
-		mocha = new Mocha(reporter: Reporter(res), timeout: 10000)
-		mocha.addFile("test/smoke/js/SmokeTests.js")
-		mocha.run () ->
-			path = require.resolve(__dirname + "/../../../../test/smoke/js/SmokeTests.js")
-			delete require.cache[path]
+		d = domain.create()
+		d.on "error", (error) ->
+ 			logger.err err: error, "error in mocha"
+		d.run () ->
+			mocha = new Mocha(reporter: Reporter(res), timeout: 10000)
+			mocha.addFile("test/smoke/js/SmokeTests.js")
+			mocha.run () ->
+				# TODO: combine this with the smoke-test-sharelatex module
+				# we need to clean up all references to the smokeTest module
+				# so it can be garbage collected.  The only reference should
+				# be in its parent, when it is loaded by mocha.addFile.
+				path = require.resolve(__dirname + "/../../../../test/smoke/js/SmokeTests.js")
+				smokeTestModule = require.cache[path]
+				if smokeTestModule?
+					parent = smokeTestModule.parent
+					while (idx = parent.children.indexOf(smokeTestModule)) != -1
+						parent.children.splice(idx, 1)
+				else
+					logger.warn {path}, "smokeTestModule not defined"
+				# remove the smokeTest from the module cache
+				delete require.cache[path]
+
+	checkRedis: (req, res, next)->
+		rclient.healthCheck (error) ->
+			if error?
+				logger.err {err: error}, "failed redis health check"
+				res.sendStatus 500
+			else
+				res.sendStatus 200
 		
 Reporter = (res) ->
 	(runner) ->
@@ -36,7 +65,8 @@ Reporter = (res) ->
 
 			res.contentType("application/json")
 			if failures.length > 0
-				res.send 500, JSON.stringify(results, null, 2)
+				logger.err failures:failures, "health check failed"
+				res.status(500).send(JSON.stringify(results, null, 2))
 			else
-				res.send 200, JSON.stringify(results, null, 2)
+				res.status(200).send(JSON.stringify(results, null, 2))
 

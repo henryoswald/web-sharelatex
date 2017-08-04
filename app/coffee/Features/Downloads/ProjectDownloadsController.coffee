@@ -1,5 +1,5 @@
 logger                  = require "logger-sharelatex"
-Metrics                 = require "../../infrastructure/Metrics"
+Metrics                 = require "metrics-sharelatex"
 Project                 = require("../../models/Project").Project
 ProjectZipStreamManager = require "./ProjectZipStreamManager"
 DocumentUpdaterHandler  = require "../DocumentUpdater/DocumentUpdaterHandler"
@@ -15,11 +15,26 @@ module.exports = ProjectDownloadsController =
 				return next(error) if error?
 				ProjectZipStreamManager.createZipStreamForProject project_id, (error, stream) ->
 					return next(error) if error?
-					res.header(
-						"Content-Disposition",
-						"attachment; filename=#{encodeURIComponent(project.name)}.zip"
+					res.setContentDisposition(
+						'attachment',
+						{filename: "#{project.name}.zip"}
 					)
 					res.contentType('application/zip')
 					stream.pipe(res)
+
+	downloadMultipleProjects: (req, res, next) ->
+		project_ids = req.query.project_ids.split(",")
+		Metrics.inc "zip-downloads-multiple"
+		logger.log project_ids: project_ids, "downloading multiple projects"
+		DocumentUpdaterHandler.flushMultipleProjectsToMongo project_ids, (error) ->
+			return next(error) if error?
+			ProjectZipStreamManager.createZipStreamForMultipleProjects project_ids, (error, stream) ->
+				return next(error) if error?
+				res.setContentDisposition(
+					'attachment',
+					{filename: "ShareLaTeX Projects (#{project_ids.length} items).zip"}
+				)
+				res.contentType('application/zip')
+				stream.pipe(res)
 
 

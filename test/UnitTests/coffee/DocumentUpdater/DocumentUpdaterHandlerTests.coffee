@@ -8,22 +8,20 @@ path = require 'path'
 _ = require 'underscore'
 modulePath = path.join __dirname, '../../../../app/js/Features/DocumentUpdater/DocumentUpdaterHandler'
 
-describe 'Flushing documents :', ->
-
+describe 'DocumentUpdaterHandler', ->
 	beforeEach ->
 		@project_id = "project-id-923"
 		@doc_id = "doc-id-394"
 		@lines = ["one", "two", "three"]
 		@version = 42
+		@user_id = "mock-user-id-123"
 		@project =
 			_id: @project_id
 
 		@request = {}
 		@projectEntityHandler = {}
-		@rclient = {auth:->}
 		@settings = 
 			apis : documentupdater: url : "http://something.com"
-			redis:{web:{}}
 		@handler = SandboxedModule.require modulePath, requires:
 			'request': defaults:=> return @request
 			'settings-sharelatex':@settings
@@ -31,62 +29,9 @@ describe 'Flushing documents :', ->
 			'../Project/ProjectEntityHandler':@projectEntityHandler
 			"../../models/Project": Project: @Project={}
 			'../../Features/Project/ProjectLocator':{}
-			'redis' : createClient: () => @rclient
-
-	describe 'queueChange', ->
-		beforeEach ->
-			@change = {
-				"action":"removeText",
-				"range":{"start":{"row":2,"column":2},"end":{"row":2,"column":3}},
-				"text":"e"
-			}
-			@rclient.rpush = sinon.stub().callsArg(2)
-			@rclient.publish = sinon.stub().callsArg(2)
-			@rclient.sadd = sinon.stub().callsArg(2)
-			@callback = sinon.stub()
-
-		describe "successfully", ->
-			beforeEach ->
-				@handler.queueChange(@project_id, @doc_id, @change, @callback)
-
-			it "should push the change", ->
-				@rclient.rpush
-					.calledWith("PendingUpdates:#{@doc_id}", JSON.stringify(@change))
-					.should.equal true
-
-			it "should notify the doc updater of the change via pub/sub", ->
-				@rclient.publish
-					.calledWith("pending-updates", "#{@project_id}:#{@doc_id}")
-					.should.equal true
-
-			it "should push the doc id into the pending updates set", ->
-				@rclient.sadd
-					.calledWith("DocsWithPendingUpdates", "#{@project_id}:#{@doc_id}")
-					.should.equal true
-
-		describe "with error connecting to redis during push", ->
-			beforeEach ->
-				@rclient.rpush = sinon.stub().callsArgWith(2, new Error("something went wrong"))
-				@handler.queueChange(@project_id, @doc_id, @change, @callback)
-
-			it "should return an error", ->
-				@callback.calledWithExactly(sinon.match(Error)).should.equal true
-
-		describe "with error connecting to redis during publish", ->
-			beforeEach ->
-				@rclient.publish = sinon.stub().callsArgWith(2, new Error("something went wrong"))
-				@handler.queueChange(@project_id, @doc_id, @change, @callback)
-
-			it "should return an error", ->
-				@callback.calledWithExactly(sinon.match(Error)).should.equal true
-
-		describe "with error connecting to redis during sadd", ->
-			beforeEach ->
-				@rclient.sadd = sinon.stub().callsArgWith(2, new Error("something went wrong"))
-				@handler.queueChange(@project_id, @doc_id, @change, @callback)
-
-			it "should return an error", ->
-				@callback.calledWithExactly(sinon.match(Error)).should.equal true
+			"metrics-sharelatex": 
+				Timer:->
+					done:->
 
 	describe 'flushProjectToMongo', ->
 		beforeEach ->
@@ -227,11 +172,12 @@ describe 'Flushing documents :', ->
 	describe "setDocument", ->
 		beforeEach ->
 			@callback = sinon.stub()
+			@source = "dropbox"
 
 		describe "successfully", ->
 			beforeEach ->
 				@request.post = sinon.stub().callsArgWith(1, null, {statusCode: 204}, "")
-				@handler.setDocument @project_id, @doc_id, @lines, @callback
+				@handler.setDocument @project_id, @doc_id, @user_id, @lines, @source, @callback
 
 			it 'should set the document in the document updater', ->
 				url = "#{@settings.apis.documentupdater.url}/project/#{@project_id}/doc/#{@doc_id}"
@@ -240,6 +186,8 @@ describe 'Flushing documents :', ->
 						url: url
 						json:
 							lines: @lines
+							source: @source
+							user_id: @user_id
 					})
 					.should.equal true
 
@@ -249,7 +197,7 @@ describe 'Flushing documents :', ->
 		describe "when the document updater API returns an error", ->
 			beforeEach ->
 				@request.post = sinon.stub().callsArgWith(1, @error = new Error("something went wrong"), null, null)
-				@handler.setDocument @project_id, @doc_id, @lines, @callback
+				@handler.setDocument @project_id, @doc_id, @user_id, @lines, @source, @callback
 
 			it "should return an error to the callback", ->
 				@callback.calledWith(@error).should.equal true
@@ -257,7 +205,7 @@ describe 'Flushing documents :', ->
 		describe "when the document updater returns a failure error code", ->
 			beforeEach ->
 				@request.post = sinon.stub().callsArgWith(1, null, { statusCode: 500 }, "")
-				@handler.setDocument @project_id, @doc_id, @lines, @callback
+				@handler.setDocument @project_id, @doc_id, @user_id, @lines, @source, @callback
 
 			it "should return the callback with an error", ->
 				@callback
@@ -274,6 +222,7 @@ describe 'Flushing documents :', ->
 					lines: @lines
 					version: @version
 					ops: @ops = ["mock-op-1", "mock-op-2"]
+					ranges: @ranges = {"mock":"ranges"}
 				@fromVersion = 2
 				@request.get = sinon.stub().callsArgWith(1, null, {statusCode: 200}, @body)
 				@handler.getDocument @project_id, @doc_id, @fromVersion, @callback
@@ -283,7 +232,7 @@ describe 'Flushing documents :', ->
 				@request.get.calledWith(url).should.equal true
 
 			it "should call the callback with the lines and version", ->
-				@callback.calledWith(null, @lines, @version, @ops).should.equal true
+				@callback.calledWith(null, @lines, @version, @ranges, @ops).should.equal true
 
 		describe "when the document updater API returns an error", ->
 			beforeEach ->
@@ -297,6 +246,79 @@ describe 'Flushing documents :', ->
 			beforeEach ->
 				@request.get = sinon.stub().callsArgWith(1, null, { statusCode: 500 }, "")
 				@handler.getDocument @project_id, @doc_id, @fromVersion, @callback
+
+			it "should return the callback with an error", ->
+				@callback
+					.calledWith(new Error("doc updater returned failure status code: 500"))
+					.should.equal true
+
+	describe "acceptChanges", ->
+		beforeEach ->
+			@change_id = "mock-change-id-1"
+			@callback = sinon.stub()
+
+		describe "successfully", ->
+			beforeEach ->
+				@request.post = sinon.stub().callsArgWith(1, null, {statusCode: 200}, @body)
+				@handler.acceptChanges @project_id, @doc_id, [ @change_id ], @callback
+
+			it 'should accept the change in the document updater', ->
+				req =
+					url: "#{@settings.apis.documentupdater.url}/project/#{@project_id}/doc/#{@doc_id}/change/accept"
+					json:
+						change_ids: [ @change_id ]
+				@request.post.calledWith(req).should.equal true
+
+			it "should call the callback", ->
+				@callback.calledWith(null).should.equal true
+
+		describe "when the document updater API returns an error", ->
+			beforeEach ->
+				@request.post = sinon.stub().callsArgWith(1, @error = new Error("something went wrong"), null, null)
+				@handler.acceptChanges @project_id, @doc_id, [ @change_id ], @callback
+
+			it "should return an error to the callback", ->
+				@callback.calledWith(@error).should.equal true
+
+		describe "when the document updater returns a failure error code", ->
+			beforeEach ->
+				@request.post = sinon.stub().callsArgWith(1, null, { statusCode: 500 }, "")
+				@handler.acceptChanges @project_id, @doc_id, [ @change_id ], @callback
+
+			it "should return the callback with an error", ->
+				@callback
+					.calledWith(new Error("doc updater returned failure status code: 500"))
+					.should.equal true
+
+	describe "deleteThread", ->
+		beforeEach ->
+			@thread_id = "mock-thread-id-1"
+			@callback = sinon.stub()
+
+		describe "successfully", ->
+			beforeEach ->
+				@request.del = sinon.stub().callsArgWith(1, null, {statusCode: 200}, @body)
+				@handler.deleteThread @project_id, @doc_id, @thread_id, @callback
+
+			it 'should delete the thread in the document updater', ->
+				url = "#{@settings.apis.documentupdater.url}/project/#{@project_id}/doc/#{@doc_id}/comment/#{@thread_id}"
+				@request.del.calledWith(url).should.equal true
+
+			it "should call the callback", ->
+				@callback.calledWith(null).should.equal true
+
+		describe "when the document updater API returns an error", ->
+			beforeEach ->
+				@request.del = sinon.stub().callsArgWith(1, @error = new Error("something went wrong"), null, null)
+				@handler.deleteThread @project_id, @doc_id, @thread_id, @callback
+
+			it "should return an error to the callback", ->
+				@callback.calledWith(@error).should.equal true
+
+		describe "when the document updater returns a failure error code", ->
+			beforeEach ->
+				@request.del = sinon.stub().callsArgWith(1, null, { statusCode: 500 }, "")
+				@handler.deleteThread @project_id, @doc_id, @thread_id, @callback
 
 			it "should return the callback with an error", ->
 				@callback

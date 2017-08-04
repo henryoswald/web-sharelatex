@@ -1,30 +1,33 @@
 settings = require("settings-sharelatex")
 async = require("async")
 UserGetter = require("../User/UserGetter")
-PasswordResetTokenHandler = require("./PasswordResetTokenHandler")
+OneTimeTokenHandler = require("../Security/OneTimeTokenHandler")
 EmailHandler = require("../Email/EmailHandler")
 AuthenticationManager = require("../Authentication/AuthenticationManager")
 logger = require("logger-sharelatex")
 
 module.exports =
 
-	generateAndEmailResetToken:(email, callback)->
+	generateAndEmailResetToken:(email, callback = (error, exists) ->)->
 		UserGetter.getUser email:email, (err, user)->
 			if err then return callback(err)
-			if !user?
+			if !user? or user.holdingAccount
 				logger.err email:email, "user could not be found for password reset"
-				return callback(message:"Can't find that email, sorry.")
-			PasswordResetTokenHandler.getNewToken user._id, (err, token)->
+				return callback(null, false)
+			OneTimeTokenHandler.getNewToken user._id, (err, token)->
 				if err then return callback(err)
 				emailOptions =
 					to : email
-					setNewPasswordUrl : "#{settings.siteUrl}/user/password/set?passwordResetToken=#{token}"
-				EmailHandler.sendEmail "passwordResetRequested", emailOptions, callback		
+					setNewPasswordUrl : "#{settings.siteUrl}/user/password/set?passwordResetToken=#{token}&email=#{encodeURIComponent(email)}"
+				EmailHandler.sendEmail "passwordResetRequested", emailOptions, (error) ->
+					return callback(error) if error?
+					callback null, true
 
-	setNewUserPassword: (token, password, callback)->
-		PasswordResetTokenHandler.getUserIdFromTokenAndExpire token, (err, user_id)->
+	setNewUserPassword: (token, password, callback = (error, found, user_id) ->)->
+		OneTimeTokenHandler.getValueFromTokenAndExpire token, (err, user_id)->
 			if err then return callback(err)
 			if !user_id?
-				logger.err user_id:user_id, "token for password reset did not find user_id"
-				return callback("no user found")
-			AuthenticationManager.setUserPassword user_id, password, callback
+				return callback null, false, null
+			AuthenticationManager.setUserPassword user_id, password, (err) ->
+				if err then return callback(err)
+				callback null, true, user_id

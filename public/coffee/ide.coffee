@@ -1,211 +1,187 @@
 define [
-	"ide/ConnectionManager"
-	"history/HistoryManager"
-	"auto-complete/AutoCompleteManager"
-	"project-members/ProjectMembersManager"
-	"settings/SettingsManager"
-	"editor/Editor"
-	"pdf/PdfManager"
-	"ide/MainAreaManager"
-	"ide/SideBarManager"
-	"ide/TabManager"
-	"ide/LayoutManager"
-	"ide/FileUploadManager"
-	"ide/SavingAreaManager"
-	"spelling/SpellingManager"
-	"search/SearchManager"
-	"models/Project"
-	"models/User"
-	"utils/Modal"
-	"file-tree/FileTreeManager"
-	"messages/MessageManager"
-	"help/HelpManager"
-	"cursors/CursorManager"
-	"keys/HotkeysManager"
-	"keys/BackspaceHighjack"
-	"file-view/FileViewManager"
-	"tour/IdeTour"
-	"analytics/AnalyticsManager"
-	"track-changes/TrackChangesManager"
-	"debug/DebugManager"
-	"ace/ace"
-	"libs/jquery.color"
-	"libs/jquery-layout"
-	"libs/backbone"
-	"main"
+	"base"
+	"ide/file-tree/FileTreeManager"
+	"ide/connection/ConnectionManager"
+	"ide/editor/EditorManager"
+	"ide/online-users/OnlineUsersManager"
+	"ide/history/HistoryManager"
+	"ide/permissions/PermissionsManager"
+	"ide/pdf/PdfManager"
+	"ide/binary-files/BinaryFilesManager"
+	"ide/references/ReferencesManager"
+	"ide/labels/LabelsManager"
+	"ide/review-panel/ReviewPanelManager"
+	"ide/SafariScrollPatcher"
+	"ide/FeatureOnboardingController"
+	"ide/settings/index"
+	"ide/share/index"
+	"ide/chat/index"
+	"ide/clone/index"
+	"ide/hotkeys/index"
+	"ide/wordcount/index"
+	"ide/directives/layout"
+	"ide/services/ide"
+	"__IDE_CLIENTSIDE_INCLUDES__"
+	"analytics/AbTestingManager"
+	"directives/focus"
+	"directives/fineUpload"
+	"directives/scroll"
+	"directives/onEnter"
+	"directives/stopPropagation"
+	"directives/rightClick"
+	"directives/expandableTextArea"
+	"directives/videoPlayState"
+	"services/queued-http"
+	"filters/formatDate"
+	"main/event"
+	"main/account-upgrade"
 ], (
-	ConnectionManager,
-	HistoryManager,
-	AutoCompleteManager,
-	ProjectMembers,
-	SettingsManager,
-	Editor,
-	PdfManager,
-	MainAreaManager,
-	SideBarManager,
-	TabManager,
-	LayoutManager,
-	FileUploadManager,
-	SavingAreaManager,
-	SpellingManager,
-	SearchManager,
-	Project,
-	User,
-	Modal,
-	FileTreeManager,
-	MessageManager,
-	HelpManager,
-	CursorManager,
-	HotkeysManager,
-	BackspaceHighjack,
-	FileViewManager,
-	IdeTour,
-	AnalyticsManager,
-	TrackChangesManager
-	DebugManager
+	App
+	FileTreeManager
+	ConnectionManager
+	EditorManager
+	OnlineUsersManager
+	HistoryManager
+	PermissionsManager
+	PdfManager
+	BinaryFilesManager
+	ReferencesManager
+	LabelsManager
+	ReviewPanelManager
+	SafariScrollPatcher
 ) ->
 
-
-
-	ProjectMembersManager = ProjectMembers.ProjectMembersManager
-
-	mainAreaManager = undefined
-	socket = undefined
-	currentDoc_id = undefined
-	selectElement = undefined
-	security = undefined
-	_.templateSettings =
-		interpolate : /\{\{(.+?)\}\}/g
-
-	isAllowedToDoIt = (permissionsLevel)->
-
-		if permissionsLevel == "owner" &&  _.include ["owner"], security.permissionsLevel
-			return true
-		else if permissionsLevel == "readAndWrite"  && _.include ["readAndWrite", "owner"], security.permissionsLevel
-			return true
-		else if permissionsLevel == "readOnly" && _.include ["readOnly", "readAndWrite", "owner"], security.permissionsLevel
-			return true
-		else
-			return false
-
-	Ide = class Ide
-		constructor: () ->
-			@userSettings = window.userSettings
-			@project_id = @userSettings.project_id
-
-			@user = User.findOrBuild window.user.id, window.user
-			
-			ide = this
-			@isAllowedToDoIt = isAllowedToDoIt
-
-			ioOptions =
-				reconnect: false
-				"force new connection": true
-			@socket = socket = io.connect null, ioOptions
-
-			@messageManager = new MessageManager(@)
-			@connectionManager = new ConnectionManager(@)
-			@tabManager = new TabManager(@)
-			@layoutManager = new LayoutManager(@)
-			@sideBarView = new SideBarManager(@, $("#sections"))
-			selectElement = @sideBarView.selectElement
-			mainAreaManager = @mainAreaManager = new MainAreaManager(@, $("#content"))
-			@fileTreeManager = new FileTreeManager(@)
-			@editor = new Editor(@)
-			@pdfManager = new PdfManager(@)
-			if @userSettings.autoComplete
-				@autoCompleteManager = new AutoCompleteManager(@)
-			@spellingManager = new SpellingManager(@)
-			@fileUploadManager = new FileUploadManager(@)
-			@searchManager = new SearchManager(@)
-			@cursorManager = new CursorManager(@)
-			@fileViewManager = new FileViewManager(@)
-			@analyticsManager = new AnalyticsManager(@)
-			if @userSettings.oldHistory
-				@historyManager = new HistoryManager(@)
+	App.controller "IdeController", ($scope, $timeout, ide, localStorage, sixpack, event_tracking, labels) ->
+		# Don't freak out if we're already in an apply callback
+		$scope.$originalApply = $scope.$apply
+		$scope.$apply = (fn = () ->) ->
+			phase = @$root.$$phase
+			if (phase == '$apply' || phase == '$digest')
+				fn()
 			else
-				@trackChangesManager = new TrackChangesManager(@)
+				this.$originalApply(fn);
 
-			@setLoadingMessage("Connecting")
-			firstConnect = true
-			socket.on "connect", () =>
-				@setLoadingMessage("Joining project")
-				joinProject = () =>
-					socket.emit 'joinProject', {project_id: @project_id}, (err, project, permissionsLevel, protocolVersion) =>
-						@hideLoadingScreen()
-						if @protocolVersion? and @protocolVersion != protocolVersion
-							location.reload(true)
-						@protocolVersion = protocolVersion
-						Security = {}
-						Security.permissionsLevel = permissionsLevel
-						@security = security = Object.freeze(Security)
-						@project = new Project project, parse: true
-						@project.set("ide", ide)						
-						ide.trigger "afterJoinProject", @project
+		$scope.state = {
+			loading: true
+			load_progress: 40
+			error: null
+		}
+		$scope.ui = {
+			leftMenuShown: false
+			view: "editor"
+			chatOpen: false
+			pdfLayout: 'sideBySide'
+			reviewPanelOpen: localStorage("ui.reviewPanelOpen.#{window.project_id}")
+			miniReviewPanelVisible: false
+		}
+		$scope.user = window.user
+		
+		$scope.$watch "project.features.trackChangesVisible", (visible) ->
+			return if !visible?
+			$scope.ui.showCollabFeaturesOnboarding = window.showTrackChangesOnboarding and visible
 
-						if firstConnect
-							@pdfManager.refreshPdf(isAutoCompile:true)
-						firstConnect = false
+		$scope.shouldABTestPlans = false
+		if $scope.user.signUpDate >= '2016-10-27'
+			$scope.shouldABTestPlans = true
 
-				setTimeout(joinProject, 100)
-	
-		showErrorModal: (title, message)->
-			new Modal {
-				title: title
-				message: message
-				buttons: [ text: "OK" ]
-			}
+		$scope.settings = window.userSettings
+		$scope.anonymous = window.anonymous
 
-		showGenericServerErrorMessage: ()->
-			new Modal {
-				title: "There was a problem talking to the server"
-				message: "Sorry, we couldn't complete your request right now. Please wait a few moments and try again. If the problem persists, please let us know."
-				buttons: [ text: "OK" ]
-			}
+		$scope.chat = {}
 
-		recentEvents: []
+		ide.toggleReviewPanel = $scope.toggleReviewPanel = () ->
+			if !$scope.project.features.trackChangesVisible
+				return
+			$scope.ui.reviewPanelOpen = !$scope.ui.reviewPanelOpen
+			event_tracking.sendMB "rp-toggle-panel", { value : $scope.ui.reviewPanelOpen }
 
-		pushEvent: (type, meta = {}) ->
-			@recentEvents.push type: type, meta: meta, date: new Date()
-			if @recentEvents.length > 40
-				@recentEvents.shift()
+		$scope.$watch "ui.reviewPanelOpen", (value) ->
+			if value?
+				localStorage "ui.reviewPanelOpen.#{window.project_id}", value
 
-		reportError: (error, meta = {}) ->
-			meta.client_id = @socket?.socket?.sessionid
-			meta.transport = @socket?.socket?.transport?.name
-			meta.client_now = new Date()
-			meta.recent_events = @recentEvents
-			errorObj = {}
-			if typeof error == "object"
-				for key in Object.getOwnPropertyNames(error)
-					errorObj[key] = error[key]
-			else if typeof error == "string"
-				errorObj.message = error
-			$.ajax
-				url: "/error/client"
-				type: "POST"
-				data: JSON.stringify
-					error: errorObj
-					meta: meta
-				contentType: "application/json; charset=utf-8"
-				headers:
-					"X-Csrf-Token": window.csrfToken
+		# Tracking code.
+		$scope.$watch "ui.view", (newView, oldView) ->
+			if newView? and newView != "editor" and newView != "pdf"
+				event_tracking.sendMBOnce "ide-open-view-#{ newView }-once"
 
-		setLoadingMessage: (message) ->
-			$("#loadingMessage").text(message)
+		$scope.$watch "ui.chatOpen", (isOpen) ->
+			event_tracking.sendMBOnce "ide-open-chat-once" if isOpen
 
-		hideLoadingScreen: () ->
-			$("#loadingScreen").remove()
+		$scope.$watch "ui.leftMenuShown", (isOpen) ->
+			event_tracking.sendMBOnce "ide-open-left-menu-once" if isOpen
 
-	_.extend(Ide::, Backbone.Events)
-	window.ide = ide = new Ide()
-	ide.projectMembersManager = new ProjectMembersManager ide
-	ide.settingsManager = new SettingsManager ide
-	ide.helpManager = new HelpManager ide
-	ide.hotkeysManager = new HotkeysManager ide
-	ide.layoutManager.resizeAllSplitters()
-	ide.tourManager = new IdeTour ide
-	ide.debugManager = new DebugManager(ide)
+		$scope.trackHover = (feature) ->
+			event_tracking.sendMBOnce "ide-hover-#{feature}-once"
+		# End of tracking code.
 
-	ide.savingAreaManager = new SavingAreaManager(ide)
+		window._ide = ide
 
+		ide.validFileRegex = '^[^\*\/]*$' # Don't allow * and /
+
+		ide.project_id = $scope.project_id = window.project_id
+		ide.$scope = $scope
+
+		ide.referencesSearchManager = new ReferencesManager(ide, $scope)
+		ide.connectionManager = new ConnectionManager(ide, $scope)
+		ide.fileTreeManager = new FileTreeManager(ide, $scope)
+		ide.editorManager = new EditorManager(ide, $scope)
+		ide.onlineUsersManager = new OnlineUsersManager(ide, $scope)
+		ide.historyManager = new HistoryManager(ide, $scope)
+		ide.pdfManager = new PdfManager(ide, $scope)
+		ide.permissionsManager = new PermissionsManager(ide, $scope)
+		ide.binaryFilesManager = new BinaryFilesManager(ide, $scope)
+		ide.labelsManager = new LabelsManager(ide, $scope, labels)
+
+		inited = false
+		$scope.$on "project:joined", () ->
+			return if inited
+			inited = true
+			if $scope?.project?.deletedByExternalDataSource
+				ide.showGenericMessageModal("Project Renamed or Deleted", """
+					This project has either been renamed or deleted by an external data source such as Dropbox.
+					We don't want to delete your data on ShareLaTeX, so this project still contains your history and collaborators.
+					If the project has been renamed please look in your project list for a new project under the new name.
+				""")
+			$timeout(
+				() ->
+					if $scope.permissions.write
+						ide.labelsManager.loadProjectLabelsFromServer()
+						_labelsInitialLoadDone = true
+				, 200
+			)
+
+		DARK_THEMES = [
+			"ambiance", "chaos", "clouds_midnight", "cobalt", "idle_fingers",
+			"merbivore", "merbivore_soft", "mono_industrial", "monokai",
+			"pastel_on_dark", "solarized_dark", "terminal", "tomorrow_night",
+			"tomorrow_night_blue", "tomorrow_night_bright", "tomorrow_night_eighties",
+			"twilight", "vibrant_ink"
+		]
+		$scope.darkTheme = false
+		$scope.$watch "settings.theme", (theme) ->
+			if theme in DARK_THEMES
+				$scope.darkTheme = true
+			else
+				$scope.darkTheme = false
+
+		ide.localStorage = localStorage
+
+		ide.browserIsSafari = false
+		try
+			userAgent = navigator.userAgent
+			ide.browserIsSafari = (
+				userAgent &&
+				userAgent.match(/.*Safari\/.*/) &&
+				!userAgent.match(/.*Chrome\/.*/) &&
+				!userAgent.match(/.*Chromium\/.*/)
+			)
+		catch err
+			console.error err
+
+		if ide.browserIsSafari
+			ide.safariScrollPatcher = new SafariScrollPatcher($scope)
+
+		# User can append ?ft=somefeature to url to activate a feature toggle
+		ide.featureToggle = location?.search?.match(/^\?ft=(\w+)$/)?[1]
+
+	angular.bootstrap(document.body, ["SharelatexApp"])
